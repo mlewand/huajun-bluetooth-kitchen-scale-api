@@ -1,0 +1,47 @@
+{
+  "name": "huajun-bluetooth-kitchen-scale-api",
+  "version": "0.0.1",
+  "description": "Read live weight from a HUAJUN (NSCALE) Bluetooth LE kitchen scale",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "capture": "tsx src/cli/capture.ts",
+    "watch": "tsx src/cli/watch.ts",
+    "typecheck": "tsc",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@stoprocent/noble": "^2.8.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "peerDependencies": {
+    "@stoprocent/noble": "^2.8.0"
+  },
+  "peerDependenciesMeta": {
+    "@stoprocent/noble": {
+      "optional": true
+    }
+  }
+}
