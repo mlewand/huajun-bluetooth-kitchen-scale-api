@@ -5,7 +5,8 @@ const $ = (id: string) => document.getElementById(id)!;
 
 $('connect').addEventListener('click', async () => {
   // Called directly from the click so Web Bluetooth accepts the device chooser.
-  const scale = new Scale(new CapacitorTransport(), {
+  // Chrome's name filter doesn't match this scale, so list all devices.
+  const scale = new Scale(new CapacitorTransport({ showAllDevices: true }), {
     onRejected: (data, r) => console.warn('ignored frame', r.reason, data),
   });
   try {

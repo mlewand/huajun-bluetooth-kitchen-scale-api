@@ -5,6 +5,8 @@ import type { ScaleTransport } from '../transport.js';
 export interface CapacitorTransportOptions {
   /** Advertised name to look for. Default `NSCALE`. */
   name?: string;
+  /** Show every nearby device instead of filtering by name (needed for Chrome, whose name filter does not match this scale). */
+  showAllDevices?: boolean;
 }
 
 /**
@@ -21,7 +23,7 @@ export class CapacitorTransport implements ScaleTransport {
     // Android 12+: the app must declare BLUETOOTH_SCAN with neverForLocation (see README).
     await BleClient.initialize({ androidNeverForLocation: true });
     const device = await BleClient.requestDevice({
-      name: this.options.name ?? 'NSCALE',
+      ...(this.options.showAllDevices ? {} : { name: this.options.name ?? 'NSCALE' }),
       optionalServices: [SERVICE_UUID], // required by Web Bluetooth to access the service
     });
     this.#deviceId = device.deviceId;
