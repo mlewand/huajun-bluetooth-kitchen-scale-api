@@ -2,6 +2,7 @@ import type { Peripheral } from '@stoprocent/noble';
 import type { ScaleTransport } from '../transport.js';
 import { findByName, waitForPoweredOn } from './discovery.js';
 
+/** Options for {@link NobleTransport}. */
 export interface NobleTransportOptions {
   /** Advertised name to scan for. Default `NSCALE`. */
   name?: string;
@@ -13,6 +14,7 @@ export interface NobleTransportOptions {
 const toNobleUuid = (uuid: string) =>
   uuid.toLowerCase().replace(/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/, '$1').replaceAll('-', '');
 
+/** Node transport built on `@stoprocent/noble` (optional peer dependency). Scans for the scale by advertised name. */
 export class NobleTransport implements ScaleTransport {
   #peripheral?: Peripheral;
 

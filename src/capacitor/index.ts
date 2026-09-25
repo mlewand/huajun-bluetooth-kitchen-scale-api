@@ -2,6 +2,7 @@ import { BleClient } from '@capacitor-community/bluetooth-le';
 import { SERVICE_UUID } from '../parse.js';
 import type { ScaleTransport } from '../transport.js';
 
+/** Options for {@link CapacitorTransport}. */
 export interface CapacitorTransportOptions {
   /** Advertised name to look for. Default `NSCALE`. */
   name?: string;

@@ -1,4 +1,7 @@
-/** Minimal BLE surface the scale needs. Implemented per platform (Node, Capacitor). */
+/**
+ * Minimal BLE surface {@link Scale} needs, so it can run on any platform (Node, Capacitor, or your own).
+ * `connect()` must resolve only once the device is connected and ready for `subscribe()`.
+ */
 export interface ScaleTransport {
   connect(): Promise<void>;
   disconnect(): Promise<void>;

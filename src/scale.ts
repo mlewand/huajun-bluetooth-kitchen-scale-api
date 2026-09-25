@@ -1,6 +1,7 @@
 import { parseFrame, WEIGHT_CHARACTERISTIC, type ParsedFrame, type Rejection, type Unit } from './parse.js';
 import type { ScaleTransport } from './transport.js';
 
+/** One decoded weight notification. Fields that aren't decoded are absent, never guessed. */
 export interface Reading {
   /** Weight in grams; present only when the scale is displaying grams. */
   grams?: number;
@@ -14,6 +15,7 @@ export interface Reading {
   receivedAt: number;
 }
 
+/** Options for {@link Scale}. */
 export interface ScaleOptions {
   /** Called for frames that fail validation. Such frames are otherwise dropped silently. */
   onRejected?: (data: Uint8Array, rejection: Rejection) => void;
@@ -34,7 +36,11 @@ const safely = (fn: () => void) => {
   try { fn(); } catch (err) { console.error(err); }
 };
 
-/** Read-only: subscribes to weight notifications, never writes to the scale. */
+/**
+ * Live weight readings from the scale over any {@link ScaleTransport}.
+ * Read-only: it subscribes to weight notifications and never writes to the scale.
+ * One instance covers one connection; create a new `Scale` to reconnect.
+ */
 export class Scale {
   #listeners = new Set<(reading: Reading) => void>();
   #disconnectListeners = new Set<() => void>();
@@ -43,7 +49,7 @@ export class Scale {
 
   constructor(private transport: ScaleTransport, private options: ScaleOptions = {}) {}
 
-  /** If this rejects, pending `readings()` iterators end and `onDisconnect` callbacks fire. */
+  /** Connect and start delivering readings. If this rejects, pending `readings()` iterators end and `onDisconnect` callbacks fire. */
   async connect(): Promise<void> {
     this.#open = true;
     try {
@@ -56,12 +62,13 @@ export class Scale {
     }
   }
 
+  /** Disconnect. Ends pending `readings()` iterators and fires `onDisconnect` callbacks. */
   async disconnect(): Promise<void> {
     await this.transport.disconnect();
     this.#close();
   }
 
-  /** Returns an unsubscribe function. */
+  /** Call `cb` for every valid reading. Returns an unsubscribe function. A throwing callback is logged and doesn't affect others. */
   onReading(cb: (reading: Reading) => void): () => void {
     this.#listeners.add(cb);
     return () => this.#listeners.delete(cb);
