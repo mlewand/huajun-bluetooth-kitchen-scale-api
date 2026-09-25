@@ -9,15 +9,21 @@ const collect = async (scale: Scale) => {
   return out;
 };
 
+/** A transport whose connect() fails. */
+class FailingTransport extends FakeTransport {
+  override async connect() { throw new Error('not found'); }
+}
+
 const replay = (label: string) => fixtures[label]!.map(bytes);
 
 describe('Scale', () => {
   it('subscribes to the weight characteristic only and yields readings until disconnect', async () => {
     const transport = new FakeTransport(replay('test3'));
     const scale = new Scale(transport);
-    const collected = collect(scale); // iterate before connect, or early frames are missed
+    const it = scale.readings(); // created before connect(), not yet iterated
     await scale.connect();
-    const readings = await collected;
+    const readings: Reading[] = [];
+    for await (const r of it) readings.push(r);
 
     expect(transport.subscribedTo).toEqual([WEIGHT_CHARACTERISTIC]);
     expect(readings).toHaveLength(fixtures.test3!.length);
@@ -56,5 +62,41 @@ describe('Scale', () => {
     expect(neg!.grams).toBe(-71.8);
     expect(oz).toMatchObject({ unit: 'oz', value: 2.43 });
     expect('grams' in oz!).toBe(false);
+  });
+
+  it('ends pending iterators and fires onDisconnect when connect() fails', async () => {
+    const scale = new Scale(new FailingTransport([]));
+    const collected = collect(scale);
+    let disconnects = 0;
+    scale.onDisconnect(() => disconnects++);
+    await expect(scale.connect()).rejects.toThrow('not found');
+    expect(await collected).toEqual([]);
+    expect(disconnects).toBe(1);
+  });
+
+  it('fires onDisconnect once, for both device drop and disconnect()', async () => {
+    const dropped = new Scale(new FakeTransport([]));
+    let n = 0;
+    dropped.onDisconnect(() => n++);
+    await dropped.connect();
+    await new Promise((r) => setTimeout(r)); // fake transport disconnects after replay
+    expect(n).toBe(1);
+
+    const manual = new Scale(new FakeTransport([], false));
+    manual.onDisconnect(() => n++);
+    await manual.connect();
+    await manual.disconnect();
+    expect(n).toBe(2);
+  });
+
+  it('keeps delivering readings when a callback throws', async () => {
+    const transport = new FakeTransport([], false);
+    const scale = new Scale(transport);
+    const got: number[] = [];
+    scale.onReading(() => { throw new Error('boom'); });
+    scale.onReading((r) => got.push(r.grams!));
+    await scale.connect();
+    transport.emit(bytes('AC 05 00 01 18 02 CA 1A'));
+    expect(got).toEqual([28]);
   });
 });

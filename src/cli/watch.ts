@@ -22,8 +22,9 @@ process.once('SIGINT', () => void scale.disconnect());
 
 try {
   console.error(`Connecting to "${args.name}"... (Ctrl+C to quit)`);
+  const readings = scale.readings();
   await scale.connect();
-  for await (const r of scale.readings()) {
+  for await (const r of readings) {
     const value = r.value !== undefined ? r.value.toFixed(r.unit === 'oz' ? 2 : 1) : `raw ${Buffer.from(r.raw).toString('hex')}`;
     console.log(`${value} ${r.unit ?? '?'}${r.stable ? '  (stable)' : ''}`);
   }

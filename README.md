@@ -28,11 +28,10 @@ const scale = new Scale(new NobleTransport(), {
 
 const off = scale.onReading((r) => console.log(r.grams, r.stable)); // callback style; off() unsubscribes
 
-const loop = (async () => {                    // start iterating BEFORE connect(), or early frames are missed
-  for await (const r of scale.readings()) console.log(r);
-})();
+const readings = scale.readings();             // listening starts here, so create it before connect()
+scale.onDisconnect(() => console.log('disconnected'));
 await scale.connect();
-await loop;                                    // ends when the scale disconnects
+for await (const r of readings) console.log(r); // ends when the connection ends (or connect() fails)
 ```
 
 A `Reading` has `grams` (only when the display unit is g), `value`, `unit`, `stable`, `raw` (the undecoded frame) and `receivedAt`. Fields that aren't decoded are absent. Frames that fail validation (wrong length or header) are dropped and reported to `onRejected`.

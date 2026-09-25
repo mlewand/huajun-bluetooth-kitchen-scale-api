@@ -30,22 +30,35 @@ const toReading = (frame: ParsedFrame, receivedAt: number): Reading => {
   return reading;
 };
 
+const safely = (fn: () => void) => {
+  try { fn(); } catch (err) { console.error(err); }
+};
+
 /** Read-only: subscribes to weight notifications, never writes to the scale. */
 export class Scale {
   #listeners = new Set<(reading: Reading) => void>();
+  #disconnectListeners = new Set<() => void>();
   #closers = new Set<() => void>();
+  #open = false;
 
   constructor(private transport: ScaleTransport, private options: ScaleOptions = {}) {}
 
+  /** If this rejects, pending `readings()` iterators end and `onDisconnect` callbacks fire. */
   async connect(): Promise<void> {
-    await this.transport.connect();
-    this.transport.onDisconnect(() => this.#closers.forEach((close) => close()));
-    await this.transport.subscribe(WEIGHT_CHARACTERISTIC, (data) => this.#handle(data));
+    this.#open = true;
+    try {
+      await this.transport.connect();
+      this.transport.onDisconnect(() => this.#close());
+      await this.transport.subscribe(WEIGHT_CHARACTERISTIC, (data) => this.#handle(data));
+    } catch (err) {
+      this.#close();
+      throw err;
+    }
   }
 
   async disconnect(): Promise<void> {
     await this.transport.disconnect();
-    this.#closers.forEach((close) => close());
+    this.#close();
   }
 
   /** Returns an unsubscribe function. */
@@ -54,33 +67,51 @@ export class Scale {
     return () => this.#listeners.delete(cb);
   }
 
+  /** Fires once when the connection ends (device disconnect, `disconnect()`, or failed `connect()`). Returns an unsubscribe function. */
+  onDisconnect(cb: () => void): () => void {
+    this.#disconnectListeners.add(cb);
+    return () => this.#disconnectListeners.delete(cb);
+  }
+
   /**
-   * Yields readings until the scale disconnects or the loop is exited.
-   * Frames are only queued once iteration has started, so start the loop before `connect()`.
+   * Readings from the moment this is called (so it may be called before `connect()`), until the
+   * connection ends or the loop is exited. Not reusable across reconnects.
    */
-  async *readings(): AsyncGenerator<Reading, void> {
+  readings(): AsyncIterableIterator<Reading> {
     const queue: Reading[] = [];
     let wake: (() => void) | undefined;
     let closed = false;
     const close = () => { closed = true; wake?.(); };
     const off = this.onReading((r) => { queue.push(r); wake?.(); });
     this.#closers.add(close);
-    try {
-      while (true) {
-        if (queue.length) yield queue.shift()!;
-        else if (closed) return;
-        else await new Promise<void>((resolve) => (wake = resolve));
-      }
-    } finally {
-      off();
-      this.#closers.delete(close);
-    }
+    const cleanup = () => { off(); this.#closers.delete(close); };
+
+    return {
+      [Symbol.asyncIterator]() { return this; },
+      async next() {
+        while (!queue.length && !closed) await new Promise<void>((resolve) => (wake = resolve));
+        if (queue.length) return { done: false, value: queue.shift()! };
+        cleanup();
+        return { done: true, value: undefined };
+      },
+      async return() {
+        cleanup();
+        return { done: true, value: undefined };
+      },
+    };
+  }
+
+  #close(): void {
+    if (!this.#open) return;
+    this.#open = false;
+    this.#closers.forEach((close) => close());
+    this.#disconnectListeners.forEach((cb) => safely(cb));
   }
 
   #handle(data: Uint8Array): void {
     const result = parseFrame(data);
     if (!result.ok) return this.options.onRejected?.(data, result.rejection);
     const reading = toReading(result.frame, Date.now());
-    for (const cb of this.#listeners) cb(reading);
+    for (const cb of this.#listeners) safely(() => cb(reading));
   }
 }

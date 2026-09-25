@@ -10,8 +10,9 @@ $('connect').addEventListener('click', async () => {
     onRejected: (data, r) => console.warn('ignored frame', r.reason, data),
   });
   try {
+    const readings = scale.readings();
     const loop = (async () => {
-      for await (const r of scale.readings()) {
+      for await (const r of readings) {
         $('weight').textContent = r.value !== undefined ? `${r.value.toFixed(r.unit === 'oz' ? 2 : 1)} ${r.unit}` : `? ${r.unit ?? ''}`;
         $('status').textContent = r.stable ? 'stable' : 'changing';
       }
