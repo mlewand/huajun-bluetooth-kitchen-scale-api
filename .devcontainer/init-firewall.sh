@@ -71,7 +71,14 @@ for domain in \
     "statsig.com" \
     "marketplace.visualstudio.com" \
     "vscode.blob.core.windows.net" \
-    "update.code.visualstudio.com"; do
+    "update.code.visualstudio.com" \
+    "services.gradle.org" \
+    "downloads.gradle.org" \
+    "plugins.gradle.org" \
+    "repo.maven.apache.org" \
+    "repo1.maven.org" \
+    "dl.google.com" \
+    "maven.google.com"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
     if [ -z "$ips" ]; then

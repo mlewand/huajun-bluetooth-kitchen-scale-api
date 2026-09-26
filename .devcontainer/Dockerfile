@@ -54,6 +54,36 @@ RUN ARCH=$(dpkg --print-architecture) && \
   sudo dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
   rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
 
+# Android toolchain for building the PoC app APK (huajun-poc-android-app).
+# JDK 21 (required by Capacitor 8 / current Android Gradle Plugin), copied from the official image.
+COPY --from=eclipse-temurin:21-jdk /opt/java/openjdk /opt/java/openjdk
+ENV JAVA_HOME=/opt/java/openjdk
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV PATH=$PATH:/opt/java/openjdk/bin:/opt/android-sdk/cmdline-tools/latest/bin
+
+# Google only ships x86-64 Linux binaries of aapt2 (used by the Android Gradle Plugin). On arm64 hosts
+# (e.g. Apple Silicon) they run under the emulation Docker Desktop provides, but need amd64 libc.
+RUN if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
+    dpkg --add-architecture amd64 && apt-get update && \
+    apt-get install -y --no-install-recommends libc6:amd64 libstdc++6:amd64 zlib1g:amd64 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*; \
+  fi
+
+# Keep compileSdk/build-tools in sync with @capacitor/android (compileSdk 36).
+ARG ANDROID_CMDLINE_TOOLS=11076708
+ARG ANDROID_PLATFORM=36
+ARG ANDROID_BUILD_TOOLS=36.0.0
+RUN mkdir -p /opt/android-sdk/cmdline-tools && \
+  wget -q "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS}_latest.zip" -O /tmp/cmdline-tools.zip && \
+  unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools && \
+  mv /tmp/cmdline-tools/cmdline-tools /opt/android-sdk/cmdline-tools/latest && \
+  rm -rf /tmp/cmdline-tools /tmp/cmdline-tools.zip && \
+  yes | sdkmanager --licenses >/dev/null && \
+  sdkmanager "platforms;android-${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" && \
+  mkdir -p /home/node/.gradle && \
+  chown -R node:node /opt/android-sdk /home/node/.gradle
+
 # Set up non-root user
 USER node
 
