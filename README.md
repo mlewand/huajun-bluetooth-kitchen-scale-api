@@ -1,13 +1,15 @@
-# huajun-bluetooth-kitchen-scale-api
+# @mlewand/huajun-ble-scale
 
 TypeScript library that reads live weight from a HUAJUN Bluetooth LE kitchen scale (advertised as `NSCALE`, 5000 g / 0.1 g). Works in Node (macOS) and in Capacitor/Web Bluetooth. Read-only: it only subscribes to notifications and never writes to the scale.
+
+**Unofficial.** This project is not affiliated with or endorsed by HUAJUN. HUAJUN is a trademark of its owner; the name is used only to say which hardware the library works with.
 
 The protocol was reverse-engineered from captures in `captures/`; only what those captures prove is decoded.
 
 ## Install
 
 ```
-npm install huajun-bluetooth-kitchen-scale-api
+npm install @mlewand/huajun-ble-scale
 npm install @stoprocent/noble                    # for the Node transport
 npm install @capacitor-community/bluetooth-le    # for the Capacitor transport
 ```
@@ -17,10 +19,10 @@ Both transport packages are optional peer dependencies; the core has no dependen
 ## Usage
 
 ```ts
-import { Scale } from 'huajun-bluetooth-kitchen-scale-api';
-import { NobleTransport } from 'huajun-bluetooth-kitchen-scale-api/node';
+import { Scale } from '@mlewand/huajun-ble-scale';
+import { NobleTransport } from '@mlewand/huajun-ble-scale/node';
 // Capacitor / browser:
-// import { CapacitorTransport } from 'huajun-bluetooth-kitchen-scale-api/capacitor';
+// import { CapacitorTransport } from '@mlewand/huajun-ble-scale/capacitor';
 
 const scale = new Scale(new NobleTransport(), {
   onRejected: (data, rejection) => console.warn('ignored frame', rejection.reason),

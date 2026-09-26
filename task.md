@@ -6,8 +6,8 @@ The work is split into phases with **checkpoints**. At each checkpoint, stop and
 
 ## Project setup
 
-- The git repository already exists and is the current working directory: `huajun-bluetooth-kitchen-scale-api`.
-- Package name: `huajun-bluetooth-kitchen-scale-api`. A single npm package with subpath exports: the root (core), `/node` (Node transport), `/capacitor` (Capacitor transport). Transport dependencies are optional peer dependencies, so the core stays dependency-free.
+- The git repository already exists and is the current working directory: `@mlewand/huajun-ble-scale`.
+- Package name: `@mlewand/huajun-ble-scale`. A single npm package with subpath exports: the root (core), `/node` (Node transport), `/capacitor` (Capacitor transport). Transport dependencies are optional peer dependencies, so the core stays dependency-free.
 - License: MIT.
 - Tooling: TypeScript (strict), ESM, `vitest` for tests, `tsx` for running scripts. Node 22 LTS.
 

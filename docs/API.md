@@ -6,9 +6,9 @@ Keep this file in sync with `src/` (enforced by `test/docs.test.ts`). For a quic
 
 | Import | Exports |
 |---|---|
-| `huajun-bluetooth-kitchen-scale-api` | `Scale`, `Reading`, `ScaleOptions`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `Unit`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
-| `huajun-bluetooth-kitchen-scale-api/node` | `NobleTransport`, `NobleTransportOptions` |
-| `huajun-bluetooth-kitchen-scale-api/capacitor` | `CapacitorTransport`, `CapacitorTransportOptions` |
+| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ScaleOptions`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `Unit`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
+| `@mlewand/huajun-ble-scale/node` | `NobleTransport`, `NobleTransportOptions` |
+| `@mlewand/huajun-ble-scale/capacitor` | `CapacitorTransport`, `CapacitorTransportOptions` |
 
 The core has no dependencies and uses only `Uint8Array`/`DataView`.
 
