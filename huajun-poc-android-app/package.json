@@ -1,0 +1,24 @@
+{
+  "name": "huajun-poc-android-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "setup:android": "npm run build && cap add android && node scripts/patch-manifest.mjs && cap sync android",
+    "sync": "npm run build && cap sync android",
+    "apk": "npm run sync && cd android && ./gradlew assembleDebug && echo \"APK: $(pwd)/app/build/outputs/apk/debug/app-debug.apk\""
+  },
+  "dependencies": {
+    "@capacitor-community/bluetooth-le": "^8.3.0",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@mlewand/huajun-ble-scale": "file:.."
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.6"
+  }
+}
