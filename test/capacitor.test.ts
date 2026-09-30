@@ -1,21 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The plugin talks to native code or Web Bluetooth; here it's a fake that records calls.
-const ble = vi.hoisted(() => ({
-  initialize: vi.fn(async () => {}),
-  requestDevice: vi.fn(async () => ({ deviceId: 'picked-id' })),
-  getDevices: vi.fn(async (ids: string[]) => ids.map((deviceId) => ({ deviceId }))),
-  connect: vi.fn(async (_id: string, _onDisconnect?: (id: string) => void) => {}),
-  disconnect: vi.fn(async () => {}),
-  startNotifications: vi.fn(async () => {}),
-}));
+const ble = vi.hoisted(() => {
+  // Each test starts from these, whatever the previous test changed (see beforeEach).
+  const defaults = {
+    initialize: async () => {},
+    requestDevice: async () => ({ deviceId: 'picked-id' }),
+    getDevices: async (ids: string[]) => ids.map((deviceId) => ({ deviceId })),
+    connect: async (_id: string, _onDisconnect?: (id: string) => void) => {},
+    disconnect: async () => {},
+    startNotifications: async () => {},
+  };
+  return {
+    defaults,
+    initialize: vi.fn(defaults.initialize),
+    requestDevice: vi.fn(defaults.requestDevice),
+    getDevices: vi.fn(defaults.getDevices),
+    connect: vi.fn(defaults.connect),
+    disconnect: vi.fn(defaults.disconnect),
+    startNotifications: vi.fn(defaults.startNotifications),
+  };
+});
 vi.mock('@capacitor-community/bluetooth-le', () => ({ BleClient: ble }));
 
 const { CapacitorTransport } = await import('../src/capacitor/index.js');
 
 describe('CapacitorTransport', () => {
   beforeEach(() => {
-    vi.resetAllMocks(); // also drops queued one-off results, and restores the defaults above
+    // Drop recorded calls and queued one-off results, then put the defaults back explicitly
+    // rather than relying on what the installed Vitest's reset restores.
+    vi.resetAllMocks();
+    ble.initialize.mockImplementation(ble.defaults.initialize);
+    ble.requestDevice.mockImplementation(ble.defaults.requestDevice);
+    ble.getDevices.mockImplementation(ble.defaults.getDevices);
+    ble.connect.mockImplementation(ble.defaults.connect);
+    ble.disconnect.mockImplementation(ble.defaults.disconnect);
+    ble.startNotifications.mockImplementation(ble.defaults.startNotifications);
   });
 
   it('without a deviceId, asks the user to pick the scale and exposes the picked id', async () => {
