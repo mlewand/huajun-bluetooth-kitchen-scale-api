@@ -11,18 +11,46 @@ export interface Reading {
   stable?: boolean;
   /** The undecoded frame, including the bytes that are not understood. */
   raw: Uint8Array;
-  /** Receive time, ms since epoch. */
+  /** Receive time, ms since epoch (`Date.now()`). Can jump when the device clock is adjusted. */
   receivedAt: number;
+  /**
+   * Receive time on a monotonic clock, in ms (`performance.now()` unless
+   * {@link ScaleOptions.monotonicNow} says otherwise). Never goes backwards, so use it for
+   * durations and ordering; only differences between readings are meaningful, not the value itself.
+   */
+  receivedAtMonotonic: number;
+}
+
+/** Receive times of one notification, for {@link toReading}. */
+export interface ReceiveTimes {
+  /** ms since epoch. */
+  receivedAt: number;
+  /** ms on a monotonic clock. */
+  receivedAtMonotonic: number;
 }
 
 /** Options for {@link Scale}. */
 export interface ScaleOptions {
   /** Called for frames that fail validation. Such frames are otherwise dropped silently. */
   onRejected?: (data: Uint8Array, rejection: Rejection) => void;
+  /**
+   * Monotonic clock for {@link Reading.receivedAtMonotonic}, in ms. Default `performance.now()`,
+   * available in browsers, Capacitor web views and Node.
+   */
+  monotonicNow?: () => number;
 }
 
-const toReading = (frame: ParsedFrame, receivedAt: number): Reading => {
-  const reading: Reading = { raw: frame.raw, receivedAt };
+/**
+ * Maps a decoded frame to the {@link Reading} that {@link Scale} delivers for it. Use it with
+ * {@link parseFrame} to turn stored raw bytes back into readings, for example to replay a
+ * recording with the current version's decoding.
+ */
+export function toReading(frame: ParsedFrame, times: ReceiveTimes): Reading {
+  const reading: Reading = {
+    raw: frame.raw,
+    receivedAt: times.receivedAt,
+    receivedAtMonotonic: times.receivedAtMonotonic,
+  };
   if (frame.unit) reading.unit = frame.unit;
   if (frame.value !== undefined) {
     reading.value = frame.value;
@@ -30,7 +58,7 @@ const toReading = (frame: ParsedFrame, receivedAt: number): Reading => {
   }
   if (frame.stable !== undefined) reading.stable = frame.stable;
   return reading;
-};
+}
 
 const safely = (fn: () => void) => {
   try { fn(); } catch (err) { console.error(err); }
@@ -118,7 +146,8 @@ export class Scale {
   #handle(data: Uint8Array): void {
     const result = parseFrame(data);
     if (!result.ok) return this.options.onRejected?.(data, result.rejection);
-    const reading = toReading(result.frame, Date.now());
+    const monotonicNow = this.options.monotonicNow ?? (() => performance.now());
+    const reading = toReading(result.frame, { receivedAt: Date.now(), receivedAtMonotonic: monotonicNow() });
     for (const cb of this.#listeners) safely(() => cb(reading));
   }
 }

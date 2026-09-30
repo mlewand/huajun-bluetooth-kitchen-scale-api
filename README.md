@@ -38,7 +38,7 @@ for await (const r of readings) console.log(r); // ends when the connection ends
 
 Full reference: [docs/API.md](docs/API.md).
 
-A `Reading` has `grams` (only when the display unit is g), `value`, `unit`, `stable`, `raw` (the undecoded frame) and `receivedAt`. Fields that aren't decoded are absent. Frames that fail validation (wrong length or header) are dropped and reported to `onRejected`.
+A `Reading` has `grams` (only when the display unit is g), `value`, `unit`, `stable`, `raw` (the undecoded frame), `receivedAt` (`Date.now()`) and `receivedAtMonotonic` (a monotonic clock, for durations). Fields that aren't decoded are absent. Frames that fail validation (wrong length or header) are dropped and reported to `onRejected`.
 
 `CapacitorTransport` calls `BleClient.initialize({ androidNeverForLocation: true })`. On Android 12+ declare `BLUETOOTH_SCAN` with `neverForLocation` in the manifest, as described in the plugin's README. On the web, `connect()` must run from a user gesture. Chrome's name filter does not match this scale, so pass `{ showAllDevices: true }` there.
 

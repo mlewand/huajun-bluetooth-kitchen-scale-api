@@ -6,7 +6,7 @@ Keep this file in sync with `src/` (enforced by `test/docs.test.ts`). For a quic
 
 | Import | Exports |
 |---|---|
-| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ScaleOptions`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `Unit`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
+| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `Unit`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
 | `@mlewand/huajun-ble-scale/node` | `NobleTransport`, `NobleTransportOptions` |
 | `@mlewand/huajun-ble-scale/capacitor` | `CapacitorTransport`, `CapacitorTransportOptions` |
 
@@ -33,6 +33,7 @@ One instance covers one connection. To reconnect, create a new `Scale`. The scal
 | Option | Description |
 |---|---|
 | `onRejected?(data, rejection)` | Called for frames that fail validation. Such frames are otherwise dropped silently. |
+| `monotonicNow?(): number` | Monotonic clock for `receivedAtMonotonic`, in ms. Default `performance.now()`, available in browsers, Capacitor web views and Node. Mainly for tests. |
 
 ## `Reading`
 
@@ -43,9 +44,26 @@ One instance covers one connection. To reconnect, create a new `Scale`. The scal
 | `unit` | `Unit` | Byte 5 holds a known unit code. `'g' \| 'ml' \| 'lb:oz' \| 'oz' \| 'fl.oz'` |
 | `stable` | `boolean` | Byte 6 is `0xCA` (true) or `0xCE` (false). |
 | `raw` | `Uint8Array` | Always. The undecoded 8-byte frame, including byte 7. |
-| `receivedAt` | `number` | Always. `Date.now()` when received. |
+| `receivedAt` | `number` | Always. `Date.now()` when received. Can jump when the device clock is adjusted. |
+| `receivedAtMonotonic` | `number` | Always. Receive time on a monotonic clock, in ms (`performance.now()` by default). Never goes backwards, so use it for durations and ordering. Only differences between readings are meaningful. |
 
 ml, fl.oz and lb:oz readings carry `unit`, `stable` and `raw` but no `value`; see [TODO.md](../TODO.md).
+
+## `toReading(frame: ParsedFrame, times: ReceiveTimes): Reading`
+
+The mapping `Scale` applies to every decoded frame, exported so stored raw bytes can be turned back into readings with the current version's decoding, for example to replay a recording:
+
+```ts
+const result = parseFrame(stored.raw);
+if (result.ok) {
+  const reading = toReading(result.frame, {
+    receivedAt: stored.receivedAt,
+    receivedAtMonotonic: stored.receivedAtMonotonic,
+  });
+}
+```
+
+`ReceiveTimes` is `{ receivedAt: number; receivedAtMonotonic: number }`, copied into the reading as is. For the same bytes and times, `toReading` returns exactly what `Scale` delivers.
 
 ## `parseFrame(bytes: Uint8Array): ParseResult`
 
