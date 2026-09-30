@@ -1,6 +1,6 @@
 {
   "name": "@mlewand/huajun-ble-scale",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Read live weight from a HUAJUN (NSCALE) Bluetooth LE kitchen scale",
   "license": "MIT",
   "type": "module",
