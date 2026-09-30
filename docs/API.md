@@ -103,9 +103,32 @@ Uses `@stoprocent/noble` (optional peer dependency). Scans by advertised name, t
 
 ## `CapacitorTransport` (`/capacitor`)
 
-Uses `@capacitor-community/bluetooth-le` (optional peer dependency). `connect()` initializes the plugin with `androidNeverForLocation: true`, shows the device picker and connects.
+Uses `@capacitor-community/bluetooth-le` (optional peer dependency). `connect()` initializes the plugin with `androidNeverForLocation: true`, then either shows the device picker or, with `deviceId`, connects to a known device without it.
 
-`CapacitorTransportOptions`: `name` (default `NSCALE`) and `showAllDevices`. Chrome's Web Bluetooth name filter does not match this scale, so set `showAllDevices: true` on the web.
+`CapacitorTransportOptions`:
 
-- **Web:** `connect()` must be called from a user gesture, on `localhost` or HTTPS.
+| Option | Description |
+|---|---|
+| `name` | Advertised name the picker filters by. Default `NSCALE`. |
+| `showAllDevices` | Show every nearby device in the picker. Chrome's Web Bluetooth name filter does not match this scale, so set it on the web. |
+| `deviceId` | Connect to this device without the picker. `name` and `showAllDevices` are then ignored. `undefined` shows the picker, so `{ deviceId: first.deviceId }` is fine before any device was picked. If the device can't be connected, `connect()` rejects with an error saying so, with the plugin's error as `cause`. It never falls back to the picker, which needs a user gesture. |
+
+`deviceId` (read-only property): the connected device's ID, whether it was picked or given. It is set once `connect()` has found the device. To reconnect after a drop without asking the user again, create a new transport and a new `Scale` with it:
+
+```ts
+const first = new CapacitorTransport({ showAllDevices: true });
+await new Scale(first).connect(); // shows the picker
+// ...after the scale disconnects:
+const again = new CapacitorTransport({ deviceId: first.deviceId });
+await new Scale(again).connect(); // no picker
+```
+
+The plugin can only connect to devices it knows about:
+- **In the same page session as the first pick** (the reconnect-after-drop case), it already does.
+- **For a device from an earlier session**, the transport first calls the plugin's `getDevices([deviceId])`, best-effort: a failure or an empty result is ignored, and the connect attempt decides.
+  - On iOS that registers the device.
+  - On the web it uses `navigator.bluetooth.getDevices()`, which Chrome still keeps behind a flag, so on the web reconnecting by ID reliably works only within the page session of the first pick.
+  - On Android the ID is enough.
+
+- **Web:** HTTPS or `localhost` only. When it shows the picker, `connect()` must be called from a user gesture.
 - **Android 12+:** declare `BLUETOOTH_SCAN` with `neverForLocation` in the manifest, per the plugin's README.
