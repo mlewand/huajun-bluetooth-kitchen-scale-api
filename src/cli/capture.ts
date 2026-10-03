@@ -65,6 +65,7 @@ async function main() {
     (c) => c.properties.includes('notify') || c.properties.includes('indicate'),
   );
   if (notifying.length === 0) throw new Error(`No notify characteristics in service ${SERVICE_UUID}`);
+  console.log(`Notifying characteristics: ${notifying.map((c) => c.uuid.toLowerCase()).join(', ')}`);
 
   mkdirSync(args.out!, { recursive: true });
   const file = join(args.out!, `${label}.jsonl`);
