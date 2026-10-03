@@ -1,11 +1,13 @@
-import { parseFrame, WEIGHT_CHARACTERISTIC, type ParsedFrame, type Rejection, type Unit } from './parse.js';
+import { parseFrame, WEIGHT_CHARACTERISTIC, type DeviceKind, type ParsedFrame, type Rejection, type Unit } from './parse.js';
 import type { ScaleTransport } from './transport.js';
 
 /** One decoded weight notification. Fields that aren't decoded are absent, never guessed. */
 export interface Reading {
+  /** Which scale's decoder produced this reading. */
+  device: DeviceKind;
   /** Weight in grams; present only when the scale is displaying grams. */
   grams?: number;
-  /** Signed weight in `unit`; see ParsedFrame.value for when it is decoded. */
+  /** Signed weight in `unit`, as the display shows it; see ParsedFrame.value for when it is decoded. */
   value?: number;
   unit?: Unit;
   stable?: boolean;
@@ -31,6 +33,11 @@ export interface ReceiveTimes {
 
 /** Options for {@link Scale}. */
 export interface ScaleOptions {
+  /**
+   * Which scale to decode. `'auto'` (default) decodes whichever scale's frames arrive, told apart
+   * by frame length. An explicit device rejects frames of the other scale as `bad-length`.
+   */
+  device?: DeviceKind | 'auto';
   /** Called for frames that fail validation. Such frames are otherwise dropped silently. */
   onRejected?: (data: Uint8Array, rejection: Rejection) => void;
   /**
@@ -47,6 +54,7 @@ export interface ScaleOptions {
  */
 export function toReading(frame: ParsedFrame, times: ReceiveTimes): Reading {
   const reading: Reading = {
+    device: frame.device,
     raw: frame.raw,
     receivedAt: times.receivedAt,
     receivedAtMonotonic: times.receivedAtMonotonic,
@@ -144,7 +152,7 @@ export class Scale {
   }
 
   #handle(data: Uint8Array): void {
-    const result = parseFrame(data);
+    const result = parseFrame(data, this.options.device ?? 'auto');
     if (!result.ok) return this.options.onRejected?.(data, result.rejection);
     const monotonicNow = this.options.monotonicNow ?? (() => performance.now());
     const reading = toReading(result.frame, { receivedAt: Date.now(), receivedAtMonotonic: monotonicNow() });

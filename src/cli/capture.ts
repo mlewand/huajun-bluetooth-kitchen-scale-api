@@ -1,5 +1,5 @@
 /**
- * Capture raw notifications from an NSCALE-style BLE kitchen scale.
+ * Capture raw notifications from a supported BLE kitchen scale (NSCALE or MY_SCALE).
  *
  * Connects by advertised name, subscribes to every notify/indicate
  * characteristic of service FFB0, records for a fixed time, then prints
@@ -11,13 +11,14 @@
 import { parseArgs } from 'node:util';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { DEVICE_NAMES } from '../parse.js';
 import { findByName, waitForPoweredOn } from '../node/discovery.js';
 
 const SERVICE_UUID = 'ffb0';
 
 const { values: args } = parseArgs({
   options: {
-    name: { type: 'string', default: 'NSCALE' },
+    name: { type: 'string' },
     duration: { type: 'string', short: 'd', default: '20' },
     label: { type: 'string', short: 'l' },
     out: { type: 'string', default: 'captures' },
@@ -25,6 +26,8 @@ const { values: args } = parseArgs({
   },
 });
 
+const names = args.name !== undefined ? [args.name] : Object.values(DEVICE_NAMES);
+const nameLabel = names.map((n) => `"${n}"`).join(' or ');
 const durationMs = Number(args.duration) * 1000;
 const scanTimeoutMs = Number(args['scan-timeout']) * 1000;
 const label = args.label ?? new Date().toISOString().replace(/[:.]/g, '-');
@@ -55,9 +58,9 @@ const sec = (ms: number) => `${(ms / 1000).toFixed(2).padStart(6)}s`;
 
 async function main() {
   await waitForPoweredOn(10_000);
-  log(`Scanning for "${args.name}"...`);
-  const peripheral = await findByName(args.name!, scanTimeoutMs);
-  log(`Found ${args.name} (id ${peripheral.id}, RSSI ${peripheral.rssi}). Connecting...`);
+  log(`Scanning for ${nameLabel}...`);
+  const peripheral = await findByName(names, scanTimeoutMs);
+  log(`Found ${peripheral.advertisement.localName} (id ${peripheral.id}, RSSI ${peripheral.rssi}). Connecting...`);
 
   await peripheral.connectAsync();
   const { characteristics } = await peripheral.discoverSomeServicesAndCharacteristicsAsync([SERVICE_UUID], []);

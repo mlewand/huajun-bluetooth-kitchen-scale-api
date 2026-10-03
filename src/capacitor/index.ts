@@ -1,12 +1,18 @@
 import { BleClient } from '@capacitor-community/bluetooth-le';
-import { SERVICE_UUID } from '../parse.js';
+import { DEVICE_NAMES, SERVICE_UUID, type DeviceKind } from '../parse.js';
 import type { ScaleTransport } from '../transport.js';
 
 /** Options for {@link CapacitorTransport}. */
 export interface CapacitorTransportOptions {
-  /** Advertised name to look for. Default `NSCALE`. */
+  /** Advertised name to look for. Overrides `device`. */
   name?: string;
-  /** Show every nearby device instead of filtering by name (needed for Chrome, whose name filter does not match this scale). */
+  /**
+   * Which scale to look for, by its advertised name (`NSCALE` for `'huajun'`, `MY_SCALE` for
+   * `'alpha'`). `'auto'` (default) shows every nearby device, because the plugin can filter by
+   * only one name and neither scale is known to advertise its service.
+   */
+  device?: DeviceKind | 'auto';
+  /** Show every nearby device even if `name` or `device` would filter (needed for Chrome, whose name filter does not match this scale). */
   showAllDevices?: boolean;
   /**
    * Connect to this device without showing the chooser: the {@link CapacitorTransport.deviceId}
@@ -18,7 +24,7 @@ export interface CapacitorTransportOptions {
 
 /**
  * Transport on @capacitor-community/bluetooth-le. Without a `deviceId` it shows the plugin's device
- * picker; on the web (desktop Chrome) that's Web Bluetooth's chooser, so `connect()` must then be
+ * picker (unfiltered unless `name` or `device` narrows it); on the web (desktop Chrome) that's Web Bluetooth's chooser, so `connect()` must then be
  * called from a user gesture. With a `deviceId` it connects to that device directly.
  */
 export class CapacitorTransport implements ScaleTransport {
@@ -63,11 +69,13 @@ export class CapacitorTransport implements ScaleTransport {
   }
 
   async #pick(): Promise<string> {
-    const device = await BleClient.requestDevice({
-      ...(this.options.showAllDevices ? {} : { name: this.options.name ?? 'NSCALE' }),
+    const { name, device = 'auto', showAllDevices } = this.options;
+    const filter = name ?? (device === 'auto' ? undefined : DEVICE_NAMES[device]);
+    const picked = await BleClient.requestDevice({
+      ...(showAllDevices || filter === undefined ? {} : { name: filter }),
       optionalServices: [SERVICE_UUID], // required by Web Bluetooth to access the service
     });
-    return device.deviceId;
+    return picked.deviceId;
   }
 
   async disconnect(): Promise<void> {

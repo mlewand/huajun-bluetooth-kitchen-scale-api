@@ -14,7 +14,10 @@ export async function waitForPoweredOn(timeoutMs = 10_000): Promise<void> {
   await noble.waitForPoweredOnAsync(timeoutMs).catch(() => { throw fail(); });
 }
 
-export function findByName(name: string, timeoutMs: number): Promise<Peripheral> {
+/** Scan until a peripheral advertises any of `names` (case-insensitive). */
+export function findByName(names: readonly string[], timeoutMs: number): Promise<Peripheral> {
+  const wanted = names.map((n) => n.toLowerCase());
+  const label = names.map((n) => `"${n}"`).join(' or ');
   return new Promise((resolve, reject) => {
     const done = () => {
       clearTimeout(timer);
@@ -23,10 +26,11 @@ export function findByName(name: string, timeoutMs: number): Promise<Peripheral>
     };
     const timer = setTimeout(() => {
       done();
-      reject(new Error(`"${name}" not found within ${timeoutMs / 1000}s. Is another device (phone) still connected to it?`));
+      reject(new Error(`${label} not found within ${timeoutMs / 1000}s. Is another device (phone) still connected to it?`));
     }, timeoutMs);
     const onDiscover = (p: Peripheral) => {
-      if (p.advertisement.localName?.toLowerCase() !== name.toLowerCase()) return;
+      const found = p.advertisement.localName?.toLowerCase();
+      if (found === undefined || !wanted.includes(found)) return;
       done();
       resolve(p);
     };

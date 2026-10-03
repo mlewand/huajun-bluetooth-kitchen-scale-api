@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Scale, WEIGHT_CHARACTERISTIC, type Reading } from '../src/index.js';
 import { fixtures } from './fixtures.js';
+import { alphaFixtures } from './fixtures.alpha.js';
 import { bytes, FakeTransport } from './helpers.js';
 
 const collect = async (scale: Scale) => {
@@ -98,5 +99,46 @@ describe('Scale', () => {
     await scale.connect();
     transport.emit(bytes('AC 05 00 01 18 02 CA 1A'));
     expect(got).toEqual([28]);
+  });
+});
+
+describe('Scale with the alpha scale', () => {
+  const alpha = (label: string) => alphaFixtures[label]!.map(bytes);
+
+  it('auto-detects alpha frames and tags readings with the device', async () => {
+    const scale = new Scale(new FakeTransport(alpha('26_grams_put_and_remove')));
+    const collected = collect(scale);
+    await scale.connect();
+    const readings = await collected;
+    expect(readings).toHaveLength(alphaFixtures['26_grams_put_and_remove']!.length);
+    expect(new Set(readings.map((r) => r.device))).toEqual(new Set(['alpha']));
+    expect(readings.find((r) => r.stable && r.grams)).toMatchObject({ grams: 26.11, unit: 'g' });
+  });
+
+  it('auto-detects HUAJUN and alpha frames on one connection', async () => {
+    const scale = new Scale(new FakeTransport([bytes('AC 05 00 01 18 02 CA 1A'), ...alpha('44ml_put').slice(0, 1)]));
+    const collected = collect(scale);
+    await scale.connect();
+    expect((await collected).map((r) => r.device)).toEqual(['huajun', 'alpha']);
+  });
+
+  it('rejects the other scale\'s frames when a device is given', async () => {
+    const rejected: string[] = [];
+    const transport = new FakeTransport([bytes('AC 05 00 01 18 02 CA 1A'), ...alpha('44ml_put').slice(0, 1)]);
+    const scale = new Scale(transport, { device: 'alpha', onRejected: (_, r) => rejected.push(r.reason) });
+    const collected = collect(scale);
+    await scale.connect();
+    expect((await collected).map((r) => r.device)).toEqual(['alpha']);
+    expect(rejected).toEqual(['bad-length']);
+  });
+
+  it('reports checksum failures to onRejected', async () => {
+    const corrupted = bytes('AC 41 01 00 00 65 FE 00 00 00 00 00 00 00 00 00 00 00 A6 0B');
+    const rejected: unknown[] = [];
+    const scale = new Scale(new FakeTransport([corrupted]), { onRejected: (_, r) => rejected.push(r) });
+    const collected = collect(scale);
+    await scale.connect();
+    expect(await collected).toEqual([]);
+    expect(rejected).toEqual([{ reason: 'bad-checksum', expected: 0x0a, actual: 0x0b }]);
   });
 });

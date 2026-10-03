@@ -18,6 +18,7 @@ describe('toReading', () => {
   it('maps a gram frame to a reading, with both receive times', () => {
     const frame = parsed('AC 05 00 01 18 02 CA 1A');
     expect(toReading(frame, times)).toEqual({
+      device: 'huajun',
       grams: 28,
       value: 28,
       unit: 'g',
@@ -56,6 +57,33 @@ describe('toReading', () => {
     const raw = bytes('AC 05 00 01 18 02 CE 1A');
     transport.emit(raw);
     expect(got).toEqual([toReading(parsed('AC 05 00 01 18 02 CE 1A'), times)]);
+  });
+});
+
+describe('toReading for the alpha scale', () => {
+  it('maps a gram frame, with the display unit and the device', () => {
+    const frame = parsed('AC 41 01 00 00 65 FE 00 00 00 00 00 00 00 00 00 00 00 A6 0A');
+    expect(toReading(frame, times)).toEqual({
+      device: 'alpha',
+      grams: 26.11,
+      value: 26.11,
+      unit: 'g',
+      stable: true,
+      raw: frame.raw,
+      ...times,
+    });
+  });
+
+  it('keeps grams signed after tare', () => {
+    const reading = toReading(parsed('AC 41 81 00 00 9F CE 00 00 00 00 00 00 00 00 00 00 00 A6 94'), times);
+    expect(reading).toMatchObject({ grams: -40.91, value: -40.91, stable: true });
+  });
+
+  it('reports oz as shown on the display and omits grams', () => {
+    const reading = toReading(parsed('AC 41 01 30 00 C0 76 00 00 00 00 00 00 00 00 00 00 00 A6 0D'), times);
+    expect(reading.unit).toBe('oz');
+    expect(reading.value).toBeCloseTo(1.738, 3);
+    expect('grams' in reading).toBe(false);
   });
 });
 

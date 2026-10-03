@@ -6,11 +6,13 @@ Keep this file in sync with `src/` (enforced by `test/docs.test.ts`). For a quic
 
 | Import | Exports |
 |---|---|
-| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `Unit`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
+| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `Unit`, `DeviceKind`, `DEVICE_NAMES`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
 | `@mlewand/huajun-ble-scale/node` | `NobleTransport`, `NobleTransportOptions` |
 | `@mlewand/huajun-ble-scale/capacitor` | `CapacitorTransport`, `CapacitorTransportOptions` |
 
 The core has no dependencies and uses only `Uint8Array`/`DataView`.
+
+Two scales are supported, identified by `DeviceKind`: `'huajun'` (advertised as `NSCALE`, 8-byte frames) and `'alpha'` (advertised as `MY_SCALE`, 20-byte frames). They share the service and characteristic UUIDs, so the frames are told apart by length.
 
 ## `Scale`
 
@@ -32,6 +34,7 @@ One instance covers one connection. To reconnect, create a new `Scale`. The scal
 
 | Option | Description |
 |---|---|
+| `device?: DeviceKind \| 'auto'` | Which scale to decode. `'auto'` (default) decodes whichever scale's frames arrive, told apart by length. An explicit device rejects the other scale's frames as `bad-length`. |
 | `onRejected?(data, rejection)` | Called for frames that fail validation. Such frames are otherwise dropped silently. |
 | `monotonicNow?(): number` | Monotonic clock for `receivedAtMonotonic`, in ms. Default `performance.now()`, available in browsers, Capacitor web views and Node. Mainly for tests. |
 
@@ -39,15 +42,20 @@ One instance covers one connection. To reconnect, create a new `Scale`. The scal
 
 | Field | Type | Present when |
 |---|---|---|
+| `device` | `DeviceKind` | Always. Which scale's decoder produced the reading. |
 | `grams` | `number` | The display unit is g. Signed (negative after tare). |
-| `value` | `number` | The unit's scale is confirmed: g (÷10) and oz (÷100). Signed, in `unit`. |
-| `unit` | `Unit` | Byte 5 holds a known unit code. `'g' \| 'ml' \| 'lb:oz' \| 'oz' \| 'fl.oz'` |
-| `stable` | `boolean` | Byte 6 is `0xCA` (true) or `0xCE` (false). |
-| `raw` | `Uint8Array` | Always. The undecoded 8-byte frame, including byte 7. |
+| `value` | `number` | The unit's scale is confirmed (see below). Signed, in `unit`, as the display shows it. |
+| `unit` | `Unit` | The frame holds a known unit code. `'g' \| 'ml' \| 'lb:oz' \| 'oz' \| 'fl.oz'` |
+| `stable` | `boolean` | HUAJUN: byte 6 is `0xCA` (true) or `0xCE` (false). alpha: byte 2 bit 0, unless bits 1-6 of byte 2 are set. |
+| `raw` | `Uint8Array` | Always. The undecoded frame (8 bytes for HUAJUN, 20 for alpha), including the bytes that are not understood. |
 | `receivedAt` | `number` | Always. `Date.now()` when received. Can jump when the device clock is adjusted. |
 | `receivedAtMonotonic` | `number` | Always. Receive time on a monotonic clock, in ms (`performance.now()` by default). Never goes backwards, so use it for durations and ordering. Only differences between readings are meaningful. |
 
-ml, fl.oz and lb:oz readings carry `unit`, `stable` and `raw` but no `value`; see [TODO.md](../TODO.md).
+`value` is decoded for HUAJUN in g (÷10) and oz (÷100), and for alpha in g, oz and ml. HUAJUN ml, fl.oz and lb:oz readings, and alpha lb:oz readings, carry `unit`, `stable` and `raw` but no `value`; see [TODO.md](../TODO.md).
+
+On alpha the scale always sends the weight in milligrams and the library converts it into the displayed unit: `value` is grams for g, grams ÷ 28.349523125 for oz, and grams for ml, which assumes water (1 g = 1 ml; the scale can't know the liquid). `grams` stays tied to the display unit, so in oz or ml mode it is absent; the exact weight in milligrams is `ParsedFrame.rawWeight` (via `parseFrame(reading.raw)`).
+
+After a value settles, the alpha scale sends about five frames with `stable: true` and then stays silent until the weight changes, so a quiet stream doesn't mean a lost connection.
 
 ## `toReading(frame: ParsedFrame, times: ReceiveTimes): Reading`
 
@@ -65,16 +73,28 @@ if (result.ok) {
 
 `ReceiveTimes` is `{ receivedAt: number; receivedAtMonotonic: number }`, copied into the reading as is. For the same bytes and times, `toReading` returns exactly what `Scale` delivers.
 
-## `parseFrame(bytes: Uint8Array): ParseResult`
+## `parseFrame(bytes: Uint8Array, device?: DeviceKind | 'auto'): ParseResult`
 
 Pure decoder for one notification. Returns `{ ok: true, frame: ParsedFrame }` or `{ ok: false, rejection: Rejection }`.
 
-`Rejection` reasons: `{ reason: 'bad-length', length }` (not 8 bytes) and `{ reason: 'bad-header', header }` (byte 0 isn't `0xAC`). There is no checksum validation because byte 7 has no known formula.
+`device` defaults to `'auto'`: an 8-byte frame is decoded as HUAJUN, a 20-byte frame as alpha, any other length is rejected. With an explicit device only that decoder runs, so the other scale's frames are rejected as `bad-length`.
 
-`ParsedFrame` has `rawWeight` (unsigned integer from bytes 3-4), `negative`, `raw`, and the optional `unit`, `value` and `stable` described above. `Unit` is the display-unit union.
+`Rejection` reasons:
+
+- `{ reason: 'bad-length', length }`: not 8 bytes (HUAJUN) or 20 bytes (alpha).
+- `{ reason: 'bad-header', header }`: byte 0 isn't `0xAC`.
+- `{ reason: 'unknown-frame-type', type }` (alpha): byte 1 isn't `0x41`.
+- `{ reason: 'bad-checksum', expected, actual }` (alpha): the low byte of the sum of bytes 2-18 doesn't equal byte 19.
+
+HUAJUN frames get no checksum validation because byte 7 has no known formula.
+
+`ParsedFrame` has `device`, `rawWeight` (unsigned magnitude as sent: HUAJUN bytes 3-4, alpha the 24 bits of bytes 4-6 in milligrams), `negative`, `raw`, and the optional `unit`, `value` and `stable` described above. `Unit` is the display-unit union.
+
+`DeviceKind` is `'huajun' | 'alpha'`.
 
 ## Constants
 
+- `DEVICE_NAMES`: advertised name per device, `{ huajun: 'NSCALE', alpha: 'MY_SCALE' }`
 - `SERVICE_UUID`: `0000ffb0-0000-1000-8000-00805f9b34fb`
 - `WEIGHT_CHARACTERISTIC`: `0000ffb2-0000-1000-8000-00805f9b34fb`
 
@@ -99,7 +119,7 @@ interface ScaleTransport {
 
 Uses `@stoprocent/noble` (optional peer dependency). Scans by advertised name, then connects.
 
-`NobleTransportOptions`: `name` (default `NSCALE`), `scanTimeoutMs` (default 20000). Errors are thrown from `connect()` with readable messages: Bluetooth off, no adapter, scale not found. On macOS the terminal app needs Bluetooth permission (System Settings > Privacy & Security > Bluetooth), otherwise `connect()` rejects with an `unauthorized` message.
+`NobleTransportOptions`: `name` (advertised name to scan for; wins over `device`), `device` (`DeviceKind | 'auto'`; an explicit device scans for that scale's name from `DEVICE_NAMES`, `'auto'`, the default, takes the first scale found under either name), `scanTimeoutMs` (default 20000). Errors are thrown from `connect()` with readable messages: Bluetooth off, no adapter, scale not found. On macOS the terminal app needs Bluetooth permission (System Settings > Privacy & Security > Bluetooth), otherwise `connect()` rejects with an `unauthorized` message.
 
 ## `CapacitorTransport` (`/capacitor`)
 
@@ -109,7 +129,8 @@ Uses `@capacitor-community/bluetooth-le` (optional peer dependency). `connect()`
 
 | Option | Description |
 |---|---|
-| `name` | Advertised name the picker filters by. Default `NSCALE`. |
+| `name` | Advertised name the picker filters by. Wins over `device`. |
+| `device` | `DeviceKind \| 'auto'`. An explicit device filters the picker by that scale's name from `DEVICE_NAMES` (`device: 'huajun'` is the old `NSCALE` filter). `'auto'`, the default, shows every nearby device, because the plugin filters by a single name and neither scale is known to advertise its service. |
 | `showAllDevices` | Show every nearby device in the picker. Chrome's Web Bluetooth name filter does not match this scale, so set it on the web. |
 | `deviceId` | Connect to this device without the picker. `name` and `showAllDevices` are then ignored. `undefined` shows the picker, so `{ deviceId: first.deviceId }` is fine before any device was picked. If the device can't be connected, `connect()` rejects with an error saying so, with the plugin's error as `cause`. It never falls back to the picker, which needs a user gesture. |
 

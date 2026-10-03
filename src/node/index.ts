@@ -1,11 +1,17 @@
 import type { Peripheral } from '@stoprocent/noble';
+import { DEVICE_NAMES, type DeviceKind } from '../parse.js';
 import type { ScaleTransport } from '../transport.js';
 import { findByName, waitForPoweredOn } from './discovery.js';
 
 /** Options for {@link NobleTransport}. */
 export interface NobleTransportOptions {
-  /** Advertised name to scan for. Default `NSCALE`. */
+  /** Advertised name to scan for. Overrides `device`. */
   name?: string;
+  /**
+   * Which scale to scan for: its advertised name (`NSCALE` for `'huajun'`, `MY_SCALE` for
+   * `'alpha'`). `'auto'` (default) takes the first scale found under either name.
+   */
+  device?: DeviceKind | 'auto';
   /** Scan timeout in ms. Default 20000. */
   scanTimeoutMs?: number;
 }
@@ -14,7 +20,7 @@ export interface NobleTransportOptions {
 const toNobleUuid = (uuid: string) =>
   uuid.toLowerCase().replace(/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/, '$1').replaceAll('-', '');
 
-/** Node transport built on `@stoprocent/noble` (optional peer dependency). Scans for the scale by advertised name. */
+/** Node transport built on `@stoprocent/noble` (optional peer dependency). Scans for the scale by advertised name (either known name by default). */
 export class NobleTransport implements ScaleTransport {
   #peripheral?: Peripheral;
 
@@ -22,8 +28,9 @@ export class NobleTransport implements ScaleTransport {
 
   async connect(): Promise<void> {
     await waitForPoweredOn();
-    const { name = 'NSCALE', scanTimeoutMs = 20_000 } = this.options;
-    this.#peripheral = await findByName(name, scanTimeoutMs);
+    const { name, device = 'auto', scanTimeoutMs = 20_000 } = this.options;
+    const names = name !== undefined ? [name] : device === 'auto' ? Object.values(DEVICE_NAMES) : [DEVICE_NAMES[device]];
+    this.#peripheral = await findByName(names, scanTimeoutMs);
     await this.#peripheral.connectAsync();
   }
 
