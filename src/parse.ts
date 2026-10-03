@@ -15,6 +15,18 @@ export type DeviceKind = 'huajun' | 'alpha';
 /** Advertised Bluetooth name of each supported scale. */
 export const DEVICE_NAMES: Record<DeviceKind, string> = { huajun: 'NSCALE', alpha: 'MY_SCALE' };
 
+/** Step size per display unit that a weight is rounded to, in that unit (for example `{ g: 0.1 }`). */
+export type Resolution = Partial<Record<Unit, number>>;
+
+/** Fallback resolution for units a device's {@link DEVICE_RESOLUTION} entry doesn't list, so a new device only needs an entry where it differs. */
+export const DEFAULT_RESOLUTION: Readonly<Resolution> = { g: 1, ml: 1, oz: 0.1, 'fl.oz': 0.1 };
+
+/** What each scale's display shows: `Reading.value` is rounded to this unless `ScaleOptions.resolution` overrides it. */
+export const DEVICE_RESOLUTION: Record<DeviceKind, Readonly<Resolution>> = {
+  huajun: { g: 0.1, oz: 0.01 },
+  alpha: { g: 1, ml: 1, oz: 0.1 },
+};
+
 /** A validated frame. Optional fields are absent (not guessed) when the captures don't confirm them. */
 export interface ParsedFrame {
   /** Which scale's decoder produced this frame. */
@@ -29,7 +41,7 @@ export interface ParsedFrame {
   /** Absent for unit codes not seen in captures. */
   unit?: Unit;
   /**
-   * Signed weight in `unit`, as the display shows it. Only decoded where a capture confirms the scale.
+   * Signed weight in `unit`. Full precision, not rounded to the display (`toReading` does that). Only decoded where a capture confirms the scale.
    * HUAJUN: g (÷10) and oz (÷100); absent for lb:oz, ml and fl.oz.
    * alpha: g, oz and ml, converted from milligrams (ml assumes water, 1 g = 1 ml); absent for lb:oz.
    */

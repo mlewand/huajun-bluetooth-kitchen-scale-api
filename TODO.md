@@ -9,6 +9,7 @@
 ## alpha (`MY_SCALE`)
 
 - **lb:oz has no `value`.** The weight is known (`rawWeight`, milligrams), but how a single signed number should represent pounds and ounces isn't decided.
+- **Display resolutions** (`DEVICE_RESOLUTION`) come from the displays in the captures: g 1, ml 1 (44.07 g shown as 44), oz 0.1 (1.738 oz shown as 1.7). The 67.49 g capture shown as 67 fits rounding to the nearest gram. Confirm with more captures near a .5 boundary.
 - **ml assumes water** (`value` = grams). Only one capture (44.07 g shown as 44 ml). The scale can't know the liquid, so confirm it doesn't apply a density.
 - **oz conversion** (÷ 28.349523125 g) is checked only against the 1.7 oz and 0 lb 2.4 oz displays. A heavier item in oz mode would make it solid.
 - **fl.oz** (unit code 4 on HUAJUN) was never captured on this scale; `unit` and `value` are absent for any code other than 0-3.

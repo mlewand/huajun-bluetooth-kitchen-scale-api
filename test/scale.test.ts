@@ -112,7 +112,14 @@ describe('Scale with the alpha scale', () => {
     const readings = await collected;
     expect(readings).toHaveLength(alphaFixtures['26_grams_put_and_remove']!.length);
     expect(new Set(readings.map((r) => r.device))).toEqual(new Set(['alpha']));
-    expect(readings.find((r) => r.stable && r.grams)).toMatchObject({ grams: 26.11, unit: 'g' });
+    expect(readings.find((r) => r.stable && r.grams)).toMatchObject({ grams: 26, unit: 'g' });
+  });
+
+  it('honours the resolution option', async () => {
+    const scale = new Scale(new FakeTransport(alpha('26_grams_put_and_remove')), { resolution: { g: 0.1 } });
+    const collected = collect(scale);
+    await scale.connect();
+    expect((await collected).find((r) => r.stable && r.grams)).toMatchObject({ grams: 26.1 });
   });
 
   it('auto-detects HUAJUN and alpha frames on one connection', async () => {

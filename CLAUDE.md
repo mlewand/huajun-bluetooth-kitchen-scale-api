@@ -22,7 +22,7 @@ The library has three layers, and each entry point maps to a `package.json` subp
    - `readings()` starts buffering as soon as it's called, so callers create it before `connect()`.
    - Listener exceptions are caught and logged with `console.error`, so one bad callback doesn't affect the others.
 3. **Transports** implement `ScaleTransport` (`src/transport.ts`). The library passes UUIDs around as full lowercase 128-bit strings.
-   - `src/node/` contains `NobleTransport` on `@stoprocent/noble`. It converts UUIDs to noble's short, dashless form. `discovery.ts` (scan by name, power-state hints) is shared with the capture CLI.
+   - `src/node/` contains `NobleTransport` on `@stoprocent/noble`. noble reports UUIDs dashless in whatever form the device declares (HUAJUN short `ffb2`, alpha full 128-bit), so it expands them to the full form before comparing. `discovery.ts` (scan by name, power-state hints) is shared with the capture CLI.
    - `src/capacitor/` contains `CapacitorTransport` on `@capacitor-community/bluetooth-le`. It covers both native and Web Bluetooth (the demo page uses it).
 
 Transport packages are optional peer dependencies. Only `src/node` and `src/capacitor` may import them.
@@ -42,7 +42,7 @@ TypeScript runs in strict mode with ESM and `NodeNext` resolution, so relative i
 The "alpha" scale (advertised `MY_SCALE`) is supported next to HUAJUN. It has the same service and `FFB2` characteristic but 20-byte frames (`AC 41 …`) instead of HUAJUN's 8 (`AC 05 …`).
 
 - **Decoders:** `src/protocols/huajun.ts` and `src/protocols/alpha.ts` are pure decoders. `parseFrame(bytes, device = 'auto')` in `src/parse.ts` dispatches by frame length, or uses the decoder named by `device` (`'huajun' | 'alpha' | 'auto'`). `Scale` takes the same `device` option; both transports take `device` to pick which advertised name to look for (`DEVICE_NAMES`).
-- **Alpha weight:** bytes 4-6 are milligrams whatever the display unit. `rawWeight` keeps them as sent, and `value` is converted into the displayed unit (ml assumes water; lb:oz has no value). Don't add new weight fields to `ParsedFrame`/`Reading`.
+- **Alpha weight:** bytes 4-6 are milligrams whatever the display unit. `rawWeight` keeps them as sent, and `value` is converted into the displayed unit (ml assumes water; lb:oz has no value). Don't add new weight fields to `ParsedFrame`/`Reading`. `toReading()` rounds `value`/`grams` to the display resolution (`DEVICE_RESOLUTION`, falling back to `DEFAULT_RESOLUTION`; override with `ScaleOptions.resolution`), while the decoders and `rawWeight` stay full precision.
 - **Captures:** `captures/alpha/*.jsonl` with `captures/alpha/NOTES.md` recording what the display showed. `captures/huajun/alpha1.jsonl` also contains alpha frames, despite being in the HUAJUN folder.
 - **Tests:** `test/fixtures.alpha.ts` holds the distinct frames per alpha capture, and `test/parse.alpha.test.ts` also replays every `captures/alpha/*.jsonl` file, so a new capture must be added to the fixtures.
 - **Same decoding rules:** the rules in `AGENTS.md` apply unchanged. Decode only fields that the captures confirm, and copy fixtures verbatim. Open questions are in `TODO.md`.

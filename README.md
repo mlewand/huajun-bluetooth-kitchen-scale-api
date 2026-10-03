@@ -36,9 +36,9 @@ await scale.connect();
 for await (const r of readings) console.log(r); // ends when the connection ends (or connect() fails)
 ```
 
-Full reference: [docs/API.md](docs/API.md).
+Full reference: [docs/API.md](docs/API.md). To support another scale, see [docs/NEW-DEVICE.md](docs/NEW-DEVICE.md).
 
-A `Reading` has `device`, `grams` (only when the display unit is g), `value`, `unit`, `stable`, `raw` (the undecoded frame), `receivedAt` (`Date.now()`) and `receivedAtMonotonic` (a monotonic clock, for durations). Fields that aren't decoded are absent. Frames that fail validation (wrong length, header, frame type or checksum) are dropped and reported to `onRejected`.
+A `Reading` has `device`, `grams` (only when the display unit is g), `value`, `unit`, `stable`, `raw` (the undecoded frame), `receivedAt` (`Date.now()`) and `receivedAtMonotonic` (a monotonic clock, for durations). `value` and `grams` are rounded to what the scale's display shows (alpha: 1 g, HUAJUN: 0.1 g); pass `resolution: { g: 0.1 }` to `Scale` for more, see [Resolution](docs/API.md#resolution). Fields that aren't decoded are absent. Frames that fail validation (wrong length, header, frame type or checksum) are dropped and reported to `onRejected`.
 
 `CapacitorTransport` calls `BleClient.initialize({ androidNeverForLocation: true })`. On Android 12+ declare `BLUETOOTH_SCAN` with `neverForLocation` in the manifest, as described in the plugin's README. On the web, `connect()` must run from a user gesture. Chrome's name filter does not match this scale, so pass `{ showAllDevices: true }` there. By default the picker is unfiltered (the plugin can filter by one name only); `{ device: 'huajun' }` or `{ device: 'alpha' }` filters by that scale's name. To reconnect without the picker, pass the first transport's `deviceId` to a new `CapacitorTransport({ deviceId })`; see [docs/API.md](docs/API.md#capacitortransport-capacitor).
 
@@ -47,7 +47,7 @@ A `Reading` has `device`, `grams` (only when the display unit is g), `value`, `u
 | Command | What it does |
 |---|---|
 | `npm run capture -- --label x [--duration 20] [--name <advertised name>]` | Records raw frames from all notify characteristics to `captures/x.jsonl` and prints a run-length summary |
-| `npm run watch [-- --device huajun\|alpha\|auto] [--name <advertised name>]` | Prints live readings through the public API |
+| `npm run watch [-- --device huajun\|alpha\|auto] [--name <advertised name>] [--resolution g=0.1]` | Prints live readings through the public API |
 | `npm run demo` | Vite demo page for desktop Chrome (Web Bluetooth): open `http://localhost:5173` |
 | `npm test`, `npm run typecheck`, `npm run build` | Tests, typecheck, build to `dist/` |
 

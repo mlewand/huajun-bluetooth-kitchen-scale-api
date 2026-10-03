@@ -1,13 +1,16 @@
-import { parseFrame, WEIGHT_CHARACTERISTIC, type DeviceKind, type ParsedFrame, type Rejection, type Unit } from './parse.js';
+import { DEFAULT_RESOLUTION, DEVICE_RESOLUTION, parseFrame, WEIGHT_CHARACTERISTIC, type DeviceKind, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
 import type { ScaleTransport } from './transport.js';
 
 /** One decoded weight notification. Fields that aren't decoded are absent, never guessed. */
 export interface Reading {
   /** Which scale's decoder produced this reading. */
   device: DeviceKind;
-  /** Weight in grams; present only when the scale is displaying grams. */
+  /** Weight in grams; present only when the scale is displaying grams. Rounded like `value`. */
   grams?: number;
-  /** Signed weight in `unit`, as the display shows it; see ParsedFrame.value for when it is decoded. */
+  /**
+   * Signed weight in `unit`, rounded to the display's resolution ({@link DEVICE_RESOLUTION}, or
+   * {@link ScaleOptions.resolution}); see ParsedFrame.value for when it is decoded.
+   */
   value?: number;
   unit?: Unit;
   stable?: boolean;
@@ -38,6 +41,12 @@ export interface ScaleOptions {
    * by frame length. An explicit device rejects frames of the other scale as `bad-length`.
    */
   device?: DeviceKind | 'auto';
+  /**
+   * Resolution to round `Reading.value` to, per unit, for example `{ g: 0.1 }`. Overrides what the
+   * device's display shows ({@link DEVICE_RESOLUTION}) for the units given. Must be finite and > 0.
+   * `ParsedFrame.rawWeight` always keeps the full precision.
+   */
+  resolution?: Resolution;
   /** Called for frames that fail validation. Such frames are otherwise dropped silently. */
   onRejected?: (data: Uint8Array, rejection: Rejection) => void;
   /**
@@ -47,12 +56,25 @@ export interface ScaleOptions {
   monotonicNow?: () => number;
 }
 
+function checkResolution(resolution: Resolution): void {
+  for (const [unit, step] of Object.entries(resolution)) {
+    if (!Number.isFinite(step) || step! <= 0) throw new RangeError(`Resolution for ${unit} must be a finite number above 0, got ${step}`);
+  }
+}
+
+/** Round the magnitude to a multiple of `step` (ties away from zero, so +/- are symmetric). */
+function roundTo(value: number, step: number): number {
+  const rounded = Number((Math.round(Math.abs(value) / step) * step).toPrecision(12));
+  return rounded === 0 ? 0 : value < 0 ? -rounded : rounded;
+}
+
 /**
  * Maps a decoded frame to the {@link Reading} that {@link Scale} delivers for it. Use it with
  * {@link parseFrame} to turn stored raw bytes back into readings, for example to replay a
- * recording with the current version's decoding.
+ * recording with the current version's decoding. `resolution` is {@link ScaleOptions.resolution}.
  */
-export function toReading(frame: ParsedFrame, times: ReceiveTimes): Reading {
+export function toReading(frame: ParsedFrame, times: ReceiveTimes, resolution: Resolution = {}): Reading {
+  checkResolution(resolution);
   const reading: Reading = {
     device: frame.device,
     raw: frame.raw,
@@ -61,8 +83,9 @@ export function toReading(frame: ParsedFrame, times: ReceiveTimes): Reading {
   };
   if (frame.unit) reading.unit = frame.unit;
   if (frame.value !== undefined) {
-    reading.value = frame.value;
-    if (frame.unit === 'g') reading.grams = frame.value;
+    const step = frame.unit && (resolution[frame.unit] ?? DEVICE_RESOLUTION[frame.device][frame.unit] ?? DEFAULT_RESOLUTION[frame.unit]);
+    reading.value = step ? roundTo(frame.value, step) : frame.value;
+    if (frame.unit === 'g') reading.grams = reading.value;
   }
   if (frame.stable !== undefined) reading.stable = frame.stable;
   return reading;
@@ -83,7 +106,9 @@ export class Scale {
   #closers = new Set<() => void>();
   #open = false;
 
-  constructor(private transport: ScaleTransport, private options: ScaleOptions = {}) {}
+  constructor(private transport: ScaleTransport, private options: ScaleOptions = {}) {
+    checkResolution(options.resolution ?? {});
+  }
 
   /** Connect and start delivering readings. If this rejects, pending `readings()` iterators end and `onDisconnect` callbacks fire. */
   async connect(): Promise<void> {
@@ -155,7 +180,7 @@ export class Scale {
     const result = parseFrame(data, this.options.device ?? 'auto');
     if (!result.ok) return this.options.onRejected?.(data, result.rejection);
     const monotonicNow = this.options.monotonicNow ?? (() => performance.now());
-    const reading = toReading(result.frame, { receivedAt: Date.now(), receivedAtMonotonic: monotonicNow() });
+    const reading = toReading(result.frame, { receivedAt: Date.now(), receivedAtMonotonic: monotonicNow() }, this.options.resolution);
     for (const cb of this.#listeners) safely(() => cb(reading));
   }
 }

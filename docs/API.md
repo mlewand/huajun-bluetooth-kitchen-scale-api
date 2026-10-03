@@ -1,12 +1,12 @@
 # API reference
 
-Keep this file in sync with `src/` (enforced by `test/docs.test.ts`). For a quick start see the [README](../README.md).
+Keep this file in sync with `src/` (enforced by `test/docs.test.ts`). For a quick start see the [README](../README.md); to support another scale see [Adding a device driver](NEW-DEVICE.md).
 
 ## Entry points
 
 | Import | Exports |
 |---|---|
-| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `Unit`, `DeviceKind`, `DEVICE_NAMES`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
+| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `Unit`, `DeviceKind`, `DEVICE_NAMES`, `Resolution`, `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
 | `@mlewand/huajun-ble-scale/node` | `NobleTransport`, `NobleTransportOptions` |
 | `@mlewand/huajun-ble-scale/capacitor` | `CapacitorTransport`, `CapacitorTransportOptions` |
 
@@ -35,6 +35,7 @@ One instance covers one connection. To reconnect, create a new `Scale`. The scal
 | Option | Description |
 |---|---|
 | `device?: DeviceKind \| 'auto'` | Which scale to decode. `'auto'` (default) decodes whichever scale's frames arrive, told apart by length. An explicit device rejects the other scale's frames as `bad-length`. |
+| `resolution?: Resolution` | Resolution `Reading.value` is rounded to, per unit, e.g. `{ g: 0.1 }` or `{ g: 0.001 }`. Merged over the device's display resolution (below), so only the units given change. Every step must be finite and > 0, otherwise the constructor throws a `RangeError`. |
 | `onRejected?(data, rejection)` | Called for frames that fail validation. Such frames are otherwise dropped silently. |
 | `monotonicNow?(): number` | Monotonic clock for `receivedAtMonotonic`, in ms. Default `performance.now()`, available in browsers, Capacitor web views and Node. Mainly for tests. |
 
@@ -43,8 +44,8 @@ One instance covers one connection. To reconnect, create a new `Scale`. The scal
 | Field | Type | Present when |
 |---|---|---|
 | `device` | `DeviceKind` | Always. Which scale's decoder produced the reading. |
-| `grams` | `number` | The display unit is g. Signed (negative after tare). |
-| `value` | `number` | The unit's scale is confirmed (see below). Signed, in `unit`, as the display shows it. |
+| `grams` | `number` | The display unit is g. Signed (negative after tare). Rounded like `value`. |
+| `value` | `number` | The unit's scale is confirmed (see below). Signed, in `unit`, rounded to the display resolution (see below). |
 | `unit` | `Unit` | The frame holds a known unit code. `'g' \| 'ml' \| 'lb:oz' \| 'oz' \| 'fl.oz'` |
 | `stable` | `boolean` | HUAJUN: byte 6 is `0xCA` (true) or `0xCE` (false). alpha: byte 2 bit 0, unless bits 1-6 of byte 2 are set. |
 | `raw` | `Uint8Array` | Always. The undecoded frame (8 bytes for HUAJUN, 20 for alpha), including the bytes that are not understood. |
@@ -55,9 +56,20 @@ One instance covers one connection. To reconnect, create a new `Scale`. The scal
 
 On alpha the scale always sends the weight in milligrams and the library converts it into the displayed unit: `value` is grams for g, grams ÷ 28.349523125 for oz, and grams for ml, which assumes water (1 g = 1 ml; the scale can't know the liquid). `grams` stays tied to the display unit, so in oz or ml mode it is absent; the exact weight in milligrams is `ParsedFrame.rawWeight` (via `parseFrame(reading.raw)`).
 
+### Resolution
+
+`value` and `grams` are rounded to what the scale's display shows, so they match what the user sees. Rounding is to the nearest step, ties away from zero, applied to the magnitude (so negative weights round like positive ones). The steps are per display unit:
+
+| Device (`DEVICE_RESOLUTION`) | g | ml | oz |
+|---|---|---|---|
+| `huajun` | 0.1 | no `value` | 0.01 |
+| `alpha` | 1 | 1 | 0.1 |
+
+`DEFAULT_RESOLUTION` (`{ g: 1, ml: 1, oz: 0.1, 'fl.oz': 0.1 }`) covers any unit a device's entry doesn't list, so a new device only needs an entry where it differs. `Resolution` is `Partial<Record<Unit, number>>`, a step size in that unit. Pass `ScaleOptions.resolution` (or the third argument of `toReading`) to ask for more, for example `{ g: 0.1 }`. The alpha scale sends milligrams, so down to `{ g: 0.001 }` is real data. `ParsedFrame.value` from `parseFrame` and `rawWeight` are never rounded.
+
 After a value settles, the alpha scale sends about five frames with `stable: true` and then stays silent until the weight changes, so a quiet stream doesn't mean a lost connection.
 
-## `toReading(frame: ParsedFrame, times: ReceiveTimes): Reading`
+## `toReading(frame: ParsedFrame, times: ReceiveTimes, resolution?: Resolution): Reading`
 
 The mapping `Scale` applies to every decoded frame, exported so stored raw bytes can be turned back into readings with the current version's decoding, for example to replay a recording:
 
@@ -71,7 +83,7 @@ if (result.ok) {
 }
 ```
 
-`ReceiveTimes` is `{ receivedAt: number; receivedAtMonotonic: number }`, copied into the reading as is. For the same bytes and times, `toReading` returns exactly what `Scale` delivers.
+`ReceiveTimes` is `{ receivedAt: number; receivedAtMonotonic: number }`, copied into the reading as is. `resolution` is `ScaleOptions.resolution` and throws `RangeError` for the same invalid steps. For the same bytes, times and resolution, `toReading` returns exactly what `Scale` delivers.
 
 ## `parseFrame(bytes: Uint8Array, device?: DeviceKind | 'auto'): ParseResult`
 
@@ -95,6 +107,7 @@ HUAJUN frames get no checksum validation because byte 7 has no known formula.
 ## Constants
 
 - `DEVICE_NAMES`: advertised name per device, `{ huajun: 'NSCALE', alpha: 'MY_SCALE' }`
+- `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `Resolution`: the display resolution per device and unit that `Reading.value` is rounded to; see [Resolution](#resolution)
 - `SERVICE_UUID`: `0000ffb0-0000-1000-8000-00805f9b34fb`
 - `WEIGHT_CHARACTERISTIC`: `0000ffb2-0000-1000-8000-00805f9b34fb`
 

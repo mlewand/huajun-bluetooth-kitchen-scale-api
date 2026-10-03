@@ -1,16 +1,17 @@
 /**
  * Print live weight readings via the public API.
  *
- *   npm run watch [-- --device huajun|alpha|auto] [--name NSCALE]
+ *   npm run watch [-- --device huajun|alpha|auto] [--name NSCALE] [--resolution g=0.1,oz=0.05]
  */
 import { parseArgs } from 'node:util';
-import { Scale, type DeviceKind } from '../index.js';
+import { DEFAULT_RESOLUTION, DEVICE_RESOLUTION, Scale, type DeviceKind, type Resolution, type Unit } from '../index.js';
 import { NobleTransport } from '../node/index.js';
 
 const { values: args } = parseArgs({
   options: {
     name: { type: 'string' },
     device: { type: 'string', default: 'auto' },
+    resolution: { type: 'string' },
     'scan-timeout': { type: 'string', default: '20' },
   },
 });
@@ -21,6 +22,21 @@ if (args.device !== 'auto' && args.device !== 'huajun' && args.device !== 'alpha
 }
 const device: DeviceKind | 'auto' = args.device;
 
+// `--resolution g=0.1,oz=0.05` overrides the display resolution per unit (see ScaleOptions.resolution).
+const resolution: Resolution = {};
+for (const pair of args.resolution?.split(',') ?? []) {
+  const [unit, step] = pair.split('=');
+  if (!unit || !(unit in DEFAULT_RESOLUTION) || !(Number(step) > 0)) {
+    console.error(`Error: --resolution expects unit=step pairs such as g=0.1 (units: ${Object.keys(DEFAULT_RESOLUTION).join(', ')})`);
+    process.exit(1);
+  }
+  resolution[unit as Unit] = Number(step);
+}
+const decimals = (r: { device: DeviceKind; unit: Unit }) => {
+  const step = resolution[r.unit] ?? DEVICE_RESOLUTION[r.device][r.unit] ?? DEFAULT_RESOLUTION[r.unit] ?? 1;
+  return (String(step).split('.')[1] ?? '').length;
+};
+
 const transport = new NobleTransport({
   device,
   scanTimeoutMs: Number(args['scan-timeout']) * 1000,
@@ -28,6 +44,7 @@ const transport = new NobleTransport({
 });
 const scale = new Scale(transport, {
   device,
+  resolution,
   onRejected: (data, rejection) => console.error(`Ignored frame (${rejection.reason}):`, Buffer.from(data).toString('hex')),
 });
 
@@ -38,7 +55,7 @@ try {
   const readings = scale.readings();
   await scale.connect();
   for await (const r of readings) {
-    const value = r.value !== undefined ? r.value.toFixed(r.unit === 'oz' ? 2 : 1) : `raw ${Buffer.from(r.raw).toString('hex')}`;
+    const value = r.value !== undefined ? r.value.toFixed(r.unit ? decimals({ device: r.device, unit: r.unit }) : 1) : `raw ${Buffer.from(r.raw).toString('hex')}`;
     console.log(`${value} ${r.unit ?? '?'}${r.stable ? '  (stable)' : ''}`);
   }
   console.error('Disconnected.');

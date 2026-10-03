@@ -16,9 +16,16 @@ export interface NobleTransportOptions {
   scanTimeoutMs?: number;
 }
 
-/** noble reports and accepts UUIDs as lowercase hex without dashes, short form for the Bluetooth base UUID. */
-const toNobleUuid = (uuid: string) =>
-  uuid.toLowerCase().replace(/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/, '$1').replaceAll('-', '');
+/**
+ * noble reports UUIDs as dashless hex, in whatever form the device declares them: HUAJUN's `FFB2`
+ * comes back as `ffb2`, alpha's as `0000ffb200001000800000805f9b34fb`. Expand both to the library's
+ * full lowercase 128-bit form so they compare equal.
+ */
+const fromNobleUuid = (uuid: string) => {
+  const hex = uuid.toLowerCase().replaceAll('-', '');
+  const full = hex.length === 4 ? `0000${hex}00001000800000805f9b34fb` : hex.length === 8 ? `${hex}00001000800000805f9b34fb` : hex;
+  return `${full.slice(0, 8)}-${full.slice(8, 12)}-${full.slice(12, 16)}-${full.slice(16, 20)}-${full.slice(20)}`;
+};
 
 /** Node transport built on `@stoprocent/noble` (optional peer dependency). Scans for the scale by advertised name (either known name by default). */
 export class NobleTransport implements ScaleTransport {
@@ -39,9 +46,11 @@ export class NobleTransport implements ScaleTransport {
   }
 
   async subscribe(characteristic: string, onData: (data: Uint8Array) => void): Promise<void> {
-    const uuid = toNobleUuid(characteristic);
-    const { characteristics } = await this.#peripheral!.discoverSomeServicesAndCharacteristicsAsync([], [uuid]);
-    const c = characteristics.find((ch) => ch.uuid === uuid);
+    // No UUID filter: noble's filter matches the reported form literally, so a short `ffb2` filter
+    // drops alpha's 128-bit characteristic. Discover everything and compare normalised UUIDs instead.
+    const { characteristics } = await this.#peripheral!.discoverAllServicesAndCharacteristicsAsync();
+    const wanted = characteristic.toLowerCase();
+    const c = characteristics.find((ch) => fromNobleUuid(ch.uuid) === wanted);
     if (!c) throw new Error(`Characteristic ${characteristic} not found`);
     c.on('data', (data: Uint8Array) => onData(new Uint8Array(data)));
     await c.subscribeAsync();

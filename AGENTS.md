@@ -12,6 +12,10 @@ Any change to the public API must update, in the same change:
 
 Public API means: exports of the three entry points, the shape of `Reading`/`ParsedFrame`/`Rejection`, `ScaleOptions`, transport options, the `ScaleTransport` contract, and lifecycle behaviour (what ends iterators, when callbacks fire).
 
+## Adding a device
+
+Follow [docs/NEW-DEVICE.md](docs/NEW-DEVICE.md): captures first, then a pure decoder in `src/protocols/`, then the table entries in `src/parse.ts`.
+
 ## Before finishing
 
 Run `npm run typecheck && npm test`. `test/docs.test.ts` fails if an exported name is missing from `docs/API.md`.
