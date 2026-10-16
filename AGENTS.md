@@ -1,6 +1,6 @@
 # Agent instructions
 
-TypeScript library for a HUAJUN BLE kitchen scale. Core is platform-agnostic (`Uint8Array`/`DataView` only); BLE goes through `ScaleTransport`. The library is read-only toward the scale and only decodes fields proven by captures in `captures/`.
+TypeScript library for a HUAJUN BLE kitchen scale. Core is platform-agnostic (`Uint8Array`/`DataView` only); BLE goes through `ScaleTransport`. The library reads from the scale and only decodes fields proven by captures in `captures/`. It writes to the scale only where the effect has been confirmed on the scale's display.
 
 ## Keep the docs in sync
 
@@ -22,5 +22,6 @@ Run `npm run typecheck && npm test`. `test/docs.test.ts` fails if an exported na
 
 ## Rules
 
-- Never add writes to the scale. Decode only what captures confirm; captured frames are fixtures copied verbatim.
+- Writes to the scale need the write-side equivalent of a capture: the effect confirmed on the scale's display. Only nutrition values (HUAJUN display counters) are in scope; no tare, unit or other commands. Unconfirmed writes are experiments and belong in `src/cli/`, which is never shipped.
+- Decode only what captures confirm; captured frames are fixtures copied verbatim.
 - Don't add dependencies to the core.

@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm test` runs all vitest tests. For a single file use `npx vitest run test/parse.test.ts`, and for a single test add `-t "<name>"`.
 - `npm run typecheck` runs `tsc` over `src`, `test` and `demo` with no emit.
 - `npm run build` runs `tsc -p tsconfig.build.json` and writes to `dist/`. `src/cli` is excluded, so CLI code never ships.
-- `npm run capture -- --label x --out captures/<device> [--duration 20] [--name NSCALE]`, `npm run watch [-- --device huajun|alpha|auto] [--resolution g=0.1,oz=0.05]` and `npm run demo` need real hardware. You can't verify them here, so typecheck them and leave hardware testing to the user. `--out` defaults to the top-level `captures/`, so always pass the device folder.
+- `npm run capture -- --label x --out captures/<device> [--duration 20] [--name NSCALE]`, `npm run watch [-- --device huajun|alpha|auto] [--resolution g=0.1,oz=0.05]`, `npm run try-nutrition [-- --values 100,2,3,4,27,5] [--resend 6] [--label x]` (HUAJUN experiment: queries the model ID and writes one nutrition frame) and `npm run demo` need real hardware. You can't verify them here, so typecheck them and leave hardware testing to the user. `--out` defaults to the top-level `captures/`, so always pass the device folder.
 
 ## Architecture
 
