@@ -35,6 +35,9 @@ export function findByName(names: readonly string[], timeoutMs: number): Promise
       resolve(p);
     };
     noble.on('discover', onDiscover);
-    noble.startScanningAsync([], false).catch(reject);
+    // Duplicates must be allowed: the scale first advertises a shortened name
+    // ("NSCAL") and only the scan response carries the full "NSCALE". Without
+    // duplicates CoreBluetooth may report the device once, with the short name.
+    noble.startScanningAsync([], true).catch(reject);
   });
 }
