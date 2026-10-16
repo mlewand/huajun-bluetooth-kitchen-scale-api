@@ -2,10 +2,13 @@
  * Experiment (HUAJUN only, never shipped): query the scale's model ID and write one nutrition
  * frame (`encodeNutrition`) to its display counters, while logging everything the scale sends.
  *
- *   npm run try-nutrition [-- --values 100,2,3,4] [--resend 6] [--duration 40] [--label x]
+ *   npm run try-nutrition [-- --values 100,2,3,4] [--skip-query] [--wait 2] [--resend 6] [--duration 40] [--label x]
  *
  * --values  Calories (kcal), protein, fat and carbohydrate (g). Every value is distinct by default
  *           so each display counter shows which field it reads.
+ * --skip-query  Don't send the model ID query first (the library never sends it).
+ * --wait    Seconds between the first weight frames (and the query) and the nutrition write.
+ *           Default 2; the library writes as soon as it's asked, which can be right after connecting.
  * --resend  Resend the nutrition frame every N seconds (the vendor app resends every 6 s).
  *           0 (default) sends it once, to see whether the display keeps it.
  * --label   Also save the session to captures/huajun/<label>.jsonl. Received frames use the
@@ -26,6 +29,8 @@ const { values: args } = parseArgs({
     name: { type: 'string', default: DEVICE_NAMES.huajun },
     values: { type: 'string', default: '100,2,3,4' },
     resend: { type: 'string', default: '0' },
+    'skip-query': { type: 'boolean', default: false },
+    wait: { type: 'string', default: '2' },
     duration: { type: 'string', default: '40' },
     label: { type: 'string' },
     out: { type: 'string', default: 'captures/huajun' },
@@ -63,6 +68,8 @@ try {
   fail(`--values: ${err instanceof Error ? err.message : err}`);
 }
 const resendMs = Number(args.resend) * 1000;
+const waitMs = Number(args.wait) * 1000;
+if (!(waitMs >= 0)) fail('--wait needs a number of seconds');
 const durationMs = Number(args.duration) * 1000;
 if (!(resendMs >= 0) || !(durationMs > 0)) fail('--resend and --duration need numbers of seconds');
 
@@ -73,7 +80,18 @@ async function main() {
   log(`Found ${peripheral.advertisement.localName} (id ${peripheral.id}). Connecting...`);
   await peripheral.connectAsync();
 
-  const { characteristics } = await peripheral.discoverSomeServicesAndCharacteristicsAsync(['ffb0'], []);
+  // Discover everything, as NobleTransport does, and print it: the library takes the first FFB1
+  // of any service, this script the one in FFB0.
+  const { services } = await peripheral.discoverAllServicesAndCharacteristicsAsync();
+  for (const s of services) {
+    log(`Service ${s.uuid}: ${(s.characteristics ?? []).map((c) => `${c.uuid} [${c.properties.join(', ')}]`).join('; ') || 'no characteristics'}`);
+  }
+  const characteristics = services.find((s) => shortUuid(s.uuid) === 'ffb0')?.characteristics ?? fail('service ffb0 not found');
+  const all = services.flatMap((s) => s.characteristics ?? []);
+  for (const uuid of ['ffb1', 'ffb2']) {
+    const matches = all.filter((c) => shortUuid(c.uuid) === uuid).length;
+    if (matches > 1) log(`Note: ${matches} characteristics match ${uuid}; the library would take the first one listed above.`);
+  }
   const find = (uuid: string) => characteristics.find((c) => shortUuid(c.uuid) === uuid) ?? fail(`characteristic ${uuid} not found`);
   const notify: Characteristic = find('ffb2');
   const write: Characteristic = find('ffb1');
@@ -130,13 +148,13 @@ async function main() {
   for (let i = 0; i < 50 && weightFrames < 3 && !stopped; i++) await sleep(100);
 
   // The vendor app sends the query on each of the first four weight frames; stop once it answers.
-  for (let i = 0; i < 4 && did === undefined && !stopped; i++) {
+  for (let i = 0; i < 4 && did === undefined && !stopped && !args['skip-query']; i++) {
     await send(DID_QUERY, 'model ID query');
     await sleep(500);
   }
 
   // The vendor app waits about 3 s after the first weight frames before sending nutrition.
-  await sleep(2000);
+  if (!stopped) await sleep(waitMs);
   const label = FIELDS.map((name) => `${name} ${nutrition[name]}`).join(', ');
   let timer: NodeJS.Timeout | undefined;
   if (!stopped) {
@@ -150,7 +168,7 @@ async function main() {
   if (stream) await new Promise<void>((r) => stream.end(r));
 
   log('');
-  log(did === undefined ? 'No model ID reply.' : `Model ID (DID): ${did} - ${MODELS[did] ?? 'not in the vendor app lists'}`);
+  log(args['skip-query'] ? 'Model ID query skipped.' : did === undefined ? 'No model ID reply.' : `Model ID (DID): ${did} - ${MODELS[did] ?? 'not in the vendor app lists'}`);
   log(`Sent: ${label}.`);
   log('Please note which display counter showed which number, and whether they stayed after a few seconds.');
   if (args.label) log(`Session saved to ${join(args.out!, `${args.label}.jsonl`)}`);
