@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { Scale, WEIGHT_CHARACTERISTIC, type Reading } from '../src/index.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Scale, WEIGHT_CHARACTERISTIC, type ButtonPress, type Reading } from '../src/index.js';
 import { fixtures } from './fixtures.js';
 import { alphaFixtures } from './fixtures.alpha.js';
 import { bytes, FakeTransport } from './helpers.js';
@@ -16,6 +16,10 @@ class FailingTransport extends FakeTransport {
 }
 
 const replay = (label: string) => fixtures[label]!.map(bytes);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('Scale', () => {
   it('subscribes to the weight characteristic only and yields readings until disconnect', async () => {
@@ -53,6 +57,48 @@ describe('Scale', () => {
     const readings = await collected;
     expect(readings).toHaveLength(1);
     expect(rejected).toEqual(['bad-length']);
+  });
+
+  it('delivers button presses to onButton, never as readings or rejections', async () => {
+    const rejected: unknown[] = [];
+    const presses: ButtonPress[] = [];
+    // captures/huajun/rev1/buttons: +Plate, then Total, between two empty-scale frames.
+    const frames = ['AC 05 00 00 00 02 CA 97', 'AC 05 FE 1E 03 00 00 27', 'AC 05 FE 1E 04 00 00 25', 'AC 05 00 00 00 02 CA 11'].map(bytes);
+    const scale = new Scale(new FakeTransport(frames), { onRejected: (_, r) => rejected.push(r), monotonicNow: () => 42 });
+    scale.onButton((p) => presses.push(p));
+    const collected = collect(scale);
+    await scale.connect();
+    const readings = await collected;
+    expect(readings.map((r) => r.grams)).toEqual([0, 0]);
+    expect(rejected).toEqual([]);
+    expect(presses.map(({ device, button, raw, receivedAtMonotonic }) => ({ device, button, raw, receivedAtMonotonic }))).toEqual([
+      { device: 'huajun', button: 'plate', raw: frames[1], receivedAtMonotonic: 42 },
+      { device: 'huajun', button: 'total', raw: frames[2], receivedAtMonotonic: 42 },
+    ]);
+    expect(presses.every((p) => typeof p.receivedAt === 'number')).toBe(true);
+  });
+
+  it('reports control frames with an unseen code to onRejected', async () => {
+    const rejected: unknown[] = [];
+    const presses: ButtonPress[] = [];
+    const scale = new Scale(new FakeTransport([bytes('AC 05 FE 1E 05 00 00 00')]), { onRejected: (_, r) => rejected.push(r) });
+    scale.onButton((p) => presses.push(p));
+    await scale.connect();
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(presses).toEqual([]);
+    expect(rejected).toEqual([{ reason: 'control-frame', type: 0x1e }]);
+  });
+
+  it('keeps calling other button listeners when one throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const presses: string[] = [];
+    const scale = new Scale(new FakeTransport([bytes('AC 05 FE 1E 03 00 00 27')]));
+    scale.onButton(() => { throw new Error('boom'); });
+    scale.onButton((p) => presses.push(p.button));
+    await scale.connect();
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(presses).toEqual(['plate']);
+    expect(error).toHaveBeenCalledTimes(1);
   });
 
   it('exposes negative grams and omits grams for other units', async () => {

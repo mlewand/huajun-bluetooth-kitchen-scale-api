@@ -29,6 +29,7 @@ const scale = new Scale(new NobleTransport(), {
 });
 
 const off = scale.onReading((r) => console.log(r.grams, r.stable)); // callback style; off() unsubscribes
+scale.onButton((p) => console.log(p.button));  // 'plate' or 'total' (HUAJUN only)
 
 const readings = scale.readings();             // listening starts here, so create it before connect()
 scale.onDisconnect(() => console.log('disconnected'));
@@ -59,17 +60,20 @@ Both scales: service `0000ffb0-…`, notifications on `FFB2`, no writes needed.
 
 ### HUAJUN (`NSCALE`)
 
-8-byte frames. `FFB4` never sent data.
+8-byte frames. `FFB4` never sent data. A notification arrives about every 225 ms, even when nothing changes.
 
 | Byte | Meaning | Status |
 |---|---|---|
 | 0 | Header `AC` | confirmed |
-| 1–2 | `05 00`, constant | meaning unknown |
-| 3–4 | Weight magnitude, big-endian; ÷10 for g, ÷100 for oz | confirmed for g, oz |
+| 1 | `05`, frame type; other values are rejected | constant in every capture |
+| 2 | `00` in weight frames; `FE` marks a control frame (below) | confirmed |
+| 3–4 | Weight magnitude, big-endian; ÷10 for g and ml, ÷100 for oz and fl.oz | confirmed for g (up to 4770.0), ml, oz, fl.oz |
 | 5, high nibble | Unit: 0 g, 1 ml, 2 lb:oz, 3 oz, 4 fl.oz | confirmed as codes |
 | 5, bit 0 | Negative sign | confirmed for g |
 | 6 | `CA` stable, `CE` changing | confirmed |
 | 7 | Unknown; not a checksum of bytes 0–6 | unverified |
+
+Control frames are `AC 05 FE 1E xx 00 00 ??`: `xx` is `03` for the `+Plate` button and `04` for `Total`. They aren't weights: `Scale.onButton` delivers them as `'plate'` and `'total'`, and `parseButton` decodes them from raw bytes. Control frames with other codes are rejected as `control-frame`. `UNIT` shows up only as the unit change in the next weight frames, and `TARE` on an empty scale sends nothing.
 
 ### alpha (`MY_SCALE`)
 
@@ -93,7 +97,7 @@ The library converts the weight into the displayed unit (`ml` assumes water). Af
 
 ## Known unknowns
 
-See [TODO.md](TODO.md): HUAJUN ml, fl.oz and lb:oz values and alpha lb:oz values aren't decoded, the HUAJUN sign is only confirmed for grams and the alpha sign comes from one capture, several bytes of both protocols are unexplained, and HUAJUN frames have no integrity check.
+See [TODO.md](TODO.md): lb:oz values aren't decoded on either scale, the HUAJUN sign is only confirmed for grams and the alpha sign comes from one capture, several bytes of both protocols are unexplained, and HUAJUN frames have no integrity check.
 
 ## License
 

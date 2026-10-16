@@ -1,5 +1,5 @@
 /**
- * Print live weight readings via the public API.
+ * Print live weight readings and button presses via the public API.
  *
  *   npm run watch [-- --device huajun|alpha|auto] [--name NSCALE] [--resolution g=0.1,oz=0.05]
  */
@@ -47,6 +47,8 @@ const scale = new Scale(transport, {
   resolution,
   onRejected: (data, rejection) => console.error(`Ignored frame (${rejection.reason}):`, Buffer.from(data).toString('hex')),
 });
+
+scale.onButton((p) => console.log(`[button] ${p.button}`));
 
 process.once('SIGINT', () => void scale.disconnect());
 

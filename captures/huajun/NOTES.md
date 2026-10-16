@@ -4,4 +4,22 @@ Display was on grams (g) unless stated. No TARE used in any run. Empty scale at 
 
 | Label | Unit shown | Settled display | Notes |
 |---|---|---|---|
-| xyz | g | 0 | comment |
+| test3 | g | 28.0 | item placed ~6-7 s in |
+| test4 | g | 525.6 | some readings showed 525.7 |
+| test5 | lb:oz | 0:1.2 | |
+| test6 | oz | 2.43 | |
+| test7 | g | 71.8 | |
+| item-placed-and-lifted | g | (empty at start, item ~24.8 g by frames, unconfirmed) | item lifted between 6 and 7 s; returns to 0 |
+| unit-cycle | g, lb:oz, oz, ml, fl.oz, g | empty scale | UNIT pressed to cycle in that order |
+| item-insert-tare-remove | g | see frames | item on, TARE, item removed (display TBD) |
+
+## rev1 (`rev1/`)
+
+Recorded later, with the battery indicator at 1 of 5 bars (low) in every run. The battery level during the runs above is unknown.
+
+| Label | Unit shown | Settled display | Notes |
+|---|---|---|---|
+| buttons | g, then lb:oz, then oz | empty scale | Two cycles of `+Plate` > `Total` > `UNIT` > `TARE`, a few seconds apart. The display gives no feedback for these buttons, so some presses might not have registered. Each cycle sent one `AC 05 FE 1E 03 …` (`+Plate`) and then one `AC 05 FE 1E 04 …` (`Total`), and `UNIT` advanced the unit (g → lb:oz, then lb:oz → oz). `TARE` sent nothing. |
+| changed-g-to-ml | g, cycled to ml | 68.9 ml | UNIT pressed several times (g → lb:oz → oz → ml), then the item placed. The display showed other values briefly before settling. One frame between oz and ml was `AC 05 00 00 00 14 CA`: ml unit code with byte 5 bits 1-3 = 2. |
+| changed-g-to-fl_oz | g, cycled to fl.oz | 2.32 fl.oz | Cycled g → lb:oz → oz → ml → fl.oz, then the item placed. |
+| grams-heavy-load | g | 4770.0 | Weights added in four steps. Byte 2 stayed `00` and the frames kept one decimal throughout. |

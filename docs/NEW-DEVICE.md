@@ -25,6 +25,7 @@ In `src/parse.ts`:
 - add its advertised name to `DEVICE_NAMES`;
 - add its display resolution per unit to `DEVICE_RESOLUTION`. Units you leave out fall back to `DEFAULT_RESOLUTION` (g 1, ml 1, oz 0.1), so list only what differs. `value` is rounded to this in `toReading()`; see [Resolution](API.md#resolution);
 - dispatch in `parseFrame`: the explicit-device branch, and the `'auto'` branch by frame length. If the new frame length equals an existing one, `'auto'` can't tell them apart and needs another rule (document it).
+- if the scale reports button presses, add a `parse<X>Button` next to the decoder and dispatch to it in `parseButton`, and reject those frames in the weight decoder as `control-frame` so `Scale` routes them to `onButton`.
 
 Also: the `--device` check in `src/cli/watch.ts` lists the devices by hand, and the `DeviceKind` TSDoc in `src/node/index.ts` and `src/capacitor/index.ts` mentions device names. Transports pick the scan name from `DEVICE_NAMES` and need no change.
 

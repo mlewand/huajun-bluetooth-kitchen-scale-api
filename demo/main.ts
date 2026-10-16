@@ -9,6 +9,7 @@ $('connect').addEventListener('click', async () => {
   const scale = new Scale(new CapacitorTransport({ showAllDevices: true }), {
     onRejected: (data, r) => console.warn('ignored frame', r.reason, data),
   });
+  scale.onButton((p) => ($('last-button').textContent = `Last button: ${p.button}`));
   try {
     const readings = scale.readings();
     const loop = (async () => {

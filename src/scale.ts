@@ -1,4 +1,4 @@
-import { DEFAULT_RESOLUTION, DEVICE_RESOLUTION, parseFrame, WEIGHT_CHARACTERISTIC, type DeviceKind, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
+import { DEFAULT_RESOLUTION, DEVICE_RESOLUTION, parseButton, parseFrame, WEIGHT_CHARACTERISTIC, type Button, type DeviceKind, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
 import type { ScaleTransport } from './transport.js';
 
 /** One decoded weight notification. Fields that aren't decoded are absent, never guessed. */
@@ -26,6 +26,20 @@ export interface Reading {
   receivedAtMonotonic: number;
 }
 
+/** A button press reported by the scale (HUAJUN only). Delivered by {@link Scale.onButton}. */
+export interface ButtonPress {
+  /** Which scale's decoder produced this event. */
+  device: DeviceKind;
+  /** The button that was pressed. */
+  button: Button;
+  /** The undecoded frame. */
+  raw: Uint8Array;
+  /** Receive time, ms since epoch (`Date.now()`), as in {@link Reading.receivedAt}. */
+  receivedAt: number;
+  /** Receive time on a monotonic clock, in ms, as in {@link Reading.receivedAtMonotonic}. */
+  receivedAtMonotonic: number;
+}
+
 /** Receive times of one notification, for {@link toReading}. */
 export interface ReceiveTimes {
   /** ms since epoch. */
@@ -47,7 +61,7 @@ export interface ScaleOptions {
    * `ParsedFrame.rawWeight` always keeps the full precision.
    */
   resolution?: Resolution;
-  /** Called for frames that fail validation. Such frames are otherwise dropped silently. */
+  /** Called for frames that fail validation and aren't a known button press. Such frames are otherwise dropped silently. */
   onRejected?: (data: Uint8Array, rejection: Rejection) => void;
   /**
    * Monotonic clock for {@link Reading.receivedAtMonotonic}, in ms. Default `performance.now()`,
@@ -102,6 +116,7 @@ const safely = (fn: () => void) => {
  */
 export class Scale {
   #listeners = new Set<(reading: Reading) => void>();
+  #buttonListeners = new Set<(press: ButtonPress) => void>();
   #disconnectListeners = new Set<() => void>();
   #closers = new Set<() => void>();
   #open = false;
@@ -133,6 +148,15 @@ export class Scale {
   onReading(cb: (reading: Reading) => void): () => void {
     this.#listeners.add(cb);
     return () => this.#listeners.delete(cb);
+  }
+
+  /**
+   * Call `cb` for every button press the scale reports: `+Plate` and `Total` on HUAJUN, nothing on
+   * alpha. Returns an unsubscribe function. A throwing callback is logged and doesn't affect others.
+   */
+  onButton(cb: (press: ButtonPress) => void): () => void {
+    this.#buttonListeners.add(cb);
+    return () => this.#buttonListeners.delete(cb);
   }
 
   /** Fires once when the connection ends (device disconnect, `disconnect()`, or failed `connect()`). Returns an unsubscribe function. */
@@ -177,10 +201,22 @@ export class Scale {
   }
 
   #handle(data: Uint8Array): void {
-    const result = parseFrame(data, this.options.device ?? 'auto');
-    if (!result.ok) return this.options.onRejected?.(data, result.rejection);
-    const monotonicNow = this.options.monotonicNow ?? (() => performance.now());
-    const reading = toReading(result.frame, { receivedAt: Date.now(), receivedAtMonotonic: monotonicNow() }, this.options.resolution);
+    const device = this.options.device ?? 'auto';
+    const result = parseFrame(data, device);
+    if (!result.ok) {
+      const button = result.rejection.reason === 'control-frame' ? parseButton(data, device) : undefined;
+      if (!button) return this.options.onRejected?.(data, result.rejection);
+      // Only HUAJUN reports buttons (parseButton).
+      const press: ButtonPress = { device: 'huajun', button, raw: data, ...this.#now() };
+      for (const cb of this.#buttonListeners) safely(() => cb(press));
+      return;
+    }
+    const reading = toReading(result.frame, this.#now(), this.options.resolution);
     for (const cb of this.#listeners) safely(() => cb(reading));
+  }
+
+  #now(): ReceiveTimes {
+    const monotonicNow = this.options.monotonicNow ?? (() => performance.now());
+    return { receivedAt: Date.now(), receivedAtMonotonic: monotonicNow() };
   }
 }

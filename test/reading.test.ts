@@ -37,11 +37,11 @@ describe('toReading', () => {
     expect(oz).toMatchObject({ unit: 'oz', value: 2.43 });
     expect('grams' in oz).toBe(false);
 
-    // ml: the unit is known, but its scale isn't confirmed, so there is no value.
-    const ml = toReading(parsed('AC 05 00 00 00 12 CA 1A'), times);
-    expect(ml.unit).toBe('ml');
-    expect('value' in ml).toBe(false);
-    expect('grams' in ml).toBe(false);
+    // lb:oz: the unit is known, but how pounds and ounces are packed isn't confirmed, so there is no value.
+    const lbOz = toReading(parsed('AC 05 00 00 0C 22 CA 1A'), times);
+    expect(lbOz.unit).toBe('lb:oz');
+    expect('value' in lbOz).toBe(false);
+    expect('grams' in lbOz).toBe(false);
 
     // Byte 6 neither 0xCA nor 0xCE: stability unknown, so absent.
     expect('stable' in toReading(parsed('AC 05 00 01 18 02 00 1A'), times)).toBe(false);
@@ -131,9 +131,12 @@ describe('Reading resolution', () => {
     expect(read(131680, { g: 0.5 }).value).toBe(131.5);
   });
 
-  it('leaves HUAJUN at its 0.1 g / 0.01 oz display', () => {
+  it('leaves HUAJUN at its 0.1 g / 0.1 ml / 0.01 oz / 0.01 fl.oz display', () => {
     expect(toReading(parsed('AC 05 00 02 CE 03 CA 1A'), times).value).toBe(-71.8);
     expect(toReading(parsed('AC 05 00 00 F3 34 CA 1A'), times).value).toBe(2.43);
+    // captures/huajun/rev1: the displays showed 68.9 ml and 2.32 fl.oz.
+    expect(toReading(parsed('AC 05 00 02 B1 12 CA C3'), times).value).toBe(68.9);
+    expect(toReading(parsed('AC 05 00 00 E8 44 CA 5A'), times).value).toBe(2.32);
   });
 
   it('rejects resolutions that are not finite and positive', () => {
