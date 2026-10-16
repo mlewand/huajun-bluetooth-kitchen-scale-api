@@ -5,7 +5,8 @@
  *                 [--nutrition 100,2,3,4]
  *
  * --nutrition  calories,protein,fat,carbohydrate: after the first reading, set the HUAJUN display's
- *              nutrition counters with `Scale.setNutrition` and print the outcome.
+ *              nutrition counters with `Scale.setNutrition` (which waits until 3 s after connecting)
+ *              and print the outcome.
  */
 import { parseArgs } from 'node:util';
 import { DEFAULT_RESOLUTION, DEVICE_RESOLUTION, Scale, type DeviceKind, type Nutrition, type Resolution, type Unit } from '../index.js';

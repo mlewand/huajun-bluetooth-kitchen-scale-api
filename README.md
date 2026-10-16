@@ -42,7 +42,7 @@ To fill the HUAJUN display's nutrition counters (they stay until the connection 
 ```ts
 const scale = new Scale(new NobleTransport({ device: 'huajun' }), { device: 'huajun' });
 await scale.connect();
-await scale.setNutrition({ calories: 100, protein: 2, fat: 3, carbohydrate: 4 }); // kcal, g, g, g
+await scale.setNutrition({ calories: 100, protein: 2, fat: 3, carbohydrate: 4 }); // kcal, g, g, g; waits until 3 s after connect()
 ```
 
 With `device: 'auto'` instead, `setNutrition` rejects until a first reading shows the scale is a HUAJUN; it doesn't wait for one.
@@ -87,7 +87,7 @@ Control frames are `AC 05 FE 1E xx 00 00 ??`: `xx` is `03` for the `+Plate` butt
 
 #### Writing nutrition (HUAJUN)
 
-Written to `FFB1` without response, 20 bytes, no checksum: `AD 01`, then six 24-bit big-endian values of round(value × 10). Confirmed on the display (model ID 21): calories (kcal), protein, fat and carbohydrate (g), shown with one decimal and kept until the connection ends. The last two values (energy from fat and fiber, as the vendor app sends them) aren't displayed. The layout comes from the vendor app; `npm run try-nutrition` is the experiment that confirmed it.
+Written to `FFB1` without response, 20 bytes, no checksum: `AD 01`, then six 24-bit big-endian values of round(value × 10). Confirmed on the display (model ID 21): calories (kcal), protein, fat and carbohydrate (g), shown with one decimal and kept until the connection ends. The scale ignores the frame in the first moments after connecting (0.2 s and 0.7 s after subscribing: ignored; 2.7 s: shown), so the library waits until 3 s after connecting, about as long as the vendor app does. The last two values (energy from fat and fiber, as the vendor app sends them) aren't displayed. The layout comes from the vendor app; `npm run try-nutrition` is the experiment that confirmed it.
 
 ### alpha (`MY_SCALE`)
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeNutrition, Scale, WRITE_CHARACTERISTIC, type Nutrition, type ScaleTransport } from '../src/index.js';
 import { alphaFixtures } from './fixtures.alpha.js';
 import { bytes, FakeTransport } from './helpers.js';
@@ -40,12 +40,19 @@ describe('encodeNutrition', () => {
 });
 
 describe('Scale.setNutrition', () => {
-  const connected = async (options: ConstructorParameters<typeof Scale>[1] = {}, frames: Uint8Array[] = []) => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Connects at monotonic time 0, then moves the clock to `elapsed` ms (past the 3 s delay by default). */
+  const connected = async (options: ConstructorParameters<typeof Scale>[1] = {}, frames: Uint8Array[] = [], elapsed = 3000) => {
+    const clock = { now: 0 };
     const transport = new FakeTransport([], false);
-    const scale = new Scale(transport, options);
+    const scale = new Scale(transport, { ...options, monotonicNow: () => clock.now });
     await scale.connect();
+    clock.now = elapsed;
     for (const f of frames) transport.emit(f);
-    return { scale, transport };
+    return { scale, transport, clock };
   };
 
   it('writes the encoded frame to FFB1 once a HUAJUN reading arrived', async () => {
@@ -92,6 +99,39 @@ describe('Scale.setNutrition', () => {
     await scale.connect();
     await scale.disconnect();
     await expect(scale.setNutrition(sample)).rejects.toThrow('Not connected');
+    expect(transport.written).toEqual([]);
+  });
+
+  it('waits until 3 s after connect() before writing, since the scale ignores earlier writes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const { scale, transport } = await connected({ device: 'huajun' }, [], 2000);
+    const sent = scale.setNutrition(sample);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(transport.written).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await sent;
+    expect(transport.written).toHaveLength(1);
+  });
+
+  it('writes in call order, also while waiting', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const { scale, transport, clock } = await connected({ device: 'huajun' }, [], 0);
+    const second = { calories: 250, protein: 10, fat: 5, carbohydrate: 30 };
+    const both = Promise.all([scale.setNutrition(sample), scale.setNutrition(second)]);
+    clock.now = 3000; // the monotonic clock moves with the timers
+    await vi.advanceTimersByTimeAsync(3000);
+    await both;
+    expect(transport.written.map((w) => w.data)).toEqual([encodeNutrition(sample), encodeNutrition(second)]);
+  });
+
+  it('rejects without writing when the connection ends while waiting', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const { scale, transport } = await connected({ device: 'huajun' }, [], 0);
+    const sent = scale.setNutrition(sample);
+    const failed = expect(sent).rejects.toThrow('Not connected');
+    await scale.disconnect();
+    await vi.advanceTimersByTimeAsync(3000);
+    await failed;
     expect(transport.written).toEqual([]);
   });
 

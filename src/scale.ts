@@ -105,6 +105,14 @@ export function toReading(frame: ParsedFrame, times: ReceiveTimes, resolution: R
   return reading;
 }
 
+/**
+ * How long after `connect()` the HUAJUN scale needs before it accepts nutrition. Writes 0.2 s and
+ * 0.7 s after subscribing were ignored, one at 2.7 s was shown; the vendor app waits about 3 s.
+ */
+const NUTRITION_DELAY_MS = 3000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 const safely = (fn: () => void) => {
   try { fn(); } catch (err) { console.error(err); }
 };
@@ -122,6 +130,10 @@ export class Scale {
   #open = false;
   /** Set once `connect()` has subscribed, cleared when the connection ends. */
   #connected = false;
+  /** Monotonic time `connect()` finished, for {@link NUTRITION_DELAY_MS}. */
+  #connectedAt = 0;
+  /** Queue that keeps nutrition writes in call order. */
+  #writes: Promise<unknown> = Promise.resolve();
   /** The device of the first decoded frame, so writes go only to a scale known to accept them. */
   #device?: DeviceKind;
 
@@ -137,6 +149,7 @@ export class Scale {
       this.transport.onDisconnect(() => this.#close());
       await this.transport.subscribe(WEIGHT_CHARACTERISTIC, (data) => this.#handle(data));
       this.#connected = this.#open;
+      this.#connectedAt = this.#monotonicNow();
     } catch (err) {
       this.#close();
       throw err;
@@ -154,9 +167,13 @@ export class Scale {
    * stay on the display until the connection ends, so call it again after reconnecting and to
    * update them. Values are rounded to 0.1.
    *
-   * Throws if not connected, if the transport has no `write`, if a value is out of range
-   * (`RangeError`, see {@link encodeNutrition}), or unless the scale is known to be HUAJUN: with
-   * `device: 'auto'`, wait for the first reading (or button press), or pass `device: 'huajun'`.
+   * The scale ignores nutrition sent too soon after connecting, so until 3 s after `connect()`
+   * resolved, the write waits and the promise resolves once it's sent. Writes go out in call order.
+   *
+   * Throws if not connected (also when the connection ends while waiting; nothing is written then),
+   * if the transport has no `write`, if a value is out of range (`RangeError`, see
+   * {@link encodeNutrition}), or unless the scale is known to be HUAJUN: with `device: 'auto'`,
+   * wait for the first reading (or button press), or pass `device: 'huajun'`.
    */
   async setNutrition(nutrition: Nutrition): Promise<void> {
     if (!this.#connected) throw new Error('Not connected');
@@ -168,7 +185,16 @@ export class Scale {
         ? 'Scale not identified yet: wait for the first reading, or pass device: \'huajun\''
         : `Writing nutrition is only supported on HUAJUN, not ${known}`);
     }
-    await this.transport.write(WRITE_CHARACTERISTIC, encodeNutrition(nutrition, known));
+    const frame = encodeNutrition(nutrition, known);
+    const write = this.transport.write.bind(this.transport);
+    const queued = this.#writes.then(async () => {
+      const wait = this.#connectedAt + NUTRITION_DELAY_MS - this.#monotonicNow();
+      if (wait > 0) await sleep(wait);
+      if (!this.#connected) throw new Error('Not connected');
+      await write(WRITE_CHARACTERISTIC, frame);
+    });
+    this.#writes = queued.catch(() => {});
+    return queued;
   }
 
   /** Call `cb` for every valid reading. Returns an unsubscribe function. A throwing callback is logged and doesn't affect others. */
@@ -245,8 +271,11 @@ export class Scale {
     for (const cb of this.#listeners) safely(() => cb(reading));
   }
 
+  #monotonicNow(): number {
+    return this.options.monotonicNow?.() ?? performance.now();
+  }
+
   #now(): ReceiveTimes {
-    const monotonicNow = this.options.monotonicNow ?? (() => performance.now());
-    return { receivedAt: Date.now(), receivedAtMonotonic: monotonicNow() };
+    return { receivedAt: Date.now(), receivedAtMonotonic: this.#monotonicNow() };
   }
 }

@@ -164,7 +164,8 @@ describe('Reading.receivedAtMonotonic', () => {
     transport.emit(bytes('AC 05 00 01 18 02 CA 1A'));
 
     expect(got.map((r) => r.receivedAt)).toEqual([2_000_000, 2_000_000 - 3_600_000]);
-    expect(got.map((r) => r.receivedAtMonotonic)).toEqual([110, 120]);
+    // 110 went to connect(), which notes when the connection was ready (for setNutrition).
+    expect(got.map((r) => r.receivedAtMonotonic)).toEqual([120, 130]);
   });
 
   it('defaults to performance.now()', async () => {

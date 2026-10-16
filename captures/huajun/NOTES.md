@@ -30,3 +30,15 @@ No JSONL was saved; this is from the console output the user reported.
 
 - Model ID query `AC 05 FE 1D 00 00 CC E7` → reply at 0.96 s: `AC 05 FE 1D 00 15 CC C4`, model ID 21 (`Nk965bt` in the vendor app, on its plate-total list).
 - Nutrition frame `AD 01 00 03 E8 00 00 14 00 00 1E 00 00 28 00 01 0E 00 00 32` (100, 2, 3, 4, 27, 5), sent once. The display showed calories 100.0 kcal, protein 2.0 g, fat 3.0 g, carbohydrate 4.0 g. Fields 5-6 (27, 5) appeared nowhere. The values stayed for as long as the connection lasted, without resending.
+
+### Timing (`npm run try-nutrition` flags, later session)
+
+`npm run watch -- --nutrition 100,2,3,4` wrote the same kind of frame through the library right after the first reading (about 0.2 s after subscribing): the counters stayed at 0. Then, with the user reporting the display:
+
+| Run | Model ID query | Write after subscribing | Counters |
+|---|---|---|---|
+| A: `try-nutrition` | yes | about 3.5 s | shown, a few seconds after the start |
+| B: `--skip-query` | no | about 2.7 s | shown |
+| C: `--skip-query --wait 0` | no | about 0.7 s | stayed at 0 |
+
+So the query isn't needed, but the scale ignores nutrition sent too soon after connecting.
