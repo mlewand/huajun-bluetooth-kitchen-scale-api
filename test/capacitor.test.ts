@@ -10,6 +10,7 @@ const ble = vi.hoisted(() => {
     connect: async (_id: string, _onDisconnect?: (id: string) => void) => {},
     disconnect: async () => {},
     startNotifications: async () => {},
+    writeWithoutResponse: async (_id: string, _service: string, _characteristic: string, _value: DataView) => {},
   };
   return {
     defaults,
@@ -19,6 +20,7 @@ const ble = vi.hoisted(() => {
     connect: vi.fn(defaults.connect),
     disconnect: vi.fn(defaults.disconnect),
     startNotifications: vi.fn(defaults.startNotifications),
+    writeWithoutResponse: vi.fn(defaults.writeWithoutResponse),
   };
 });
 vi.mock('@capacitor-community/bluetooth-le', () => ({ BleClient: ble }));
@@ -36,6 +38,7 @@ describe('CapacitorTransport', () => {
     ble.connect.mockImplementation(ble.defaults.connect);
     ble.disconnect.mockImplementation(ble.defaults.disconnect);
     ble.startNotifications.mockImplementation(ble.defaults.startNotifications);
+    ble.writeWithoutResponse.mockImplementation(ble.defaults.writeWithoutResponse);
   });
 
   it('without a deviceId, asks the user to pick the scale and exposes the picked id', async () => {
@@ -156,5 +159,15 @@ describe('CapacitorTransport', () => {
     );
     await transport.disconnect();
     expect(ble.disconnect).toHaveBeenCalledWith('known-id');
+  });
+
+  it('writes without response to the connected device', async () => {
+    const transport = new CapacitorTransport({ deviceId: 'known-id' });
+    await transport.connect();
+    const data = Uint8Array.from([0xad, 0x01, 0x00, 0x03, 0xe8]);
+    await transport.write('0000ffb1-0000-1000-8000-00805f9b34fb', data);
+    expect(ble.writeWithoutResponse).toHaveBeenCalledWith('known-id', '0000ffb0-0000-1000-8000-00805f9b34fb', '0000ffb1-0000-1000-8000-00805f9b34fb', expect.any(DataView));
+    const view = ble.writeWithoutResponse.mock.calls[0]![3];
+    expect(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)).toEqual(data);
   });
 });

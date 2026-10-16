@@ -88,6 +88,11 @@ export class CapacitorTransport implements ScaleTransport {
     );
   }
 
+  /** Writes without response (HUAJUN's `FFB1` allows it). */
+  async write(characteristic: string, data: Uint8Array): Promise<void> {
+    await BleClient.writeWithoutResponse(this.#deviceId!, SERVICE_UUID, characteristic, new DataView(data.buffer, data.byteOffset, data.byteLength));
+  }
+
   onDisconnect(cb: () => void): void {
     this.#onDisconnect = cb;
   }

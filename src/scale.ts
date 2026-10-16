@@ -1,4 +1,4 @@
-import { DEFAULT_RESOLUTION, DEVICE_RESOLUTION, parseButton, parseFrame, WEIGHT_CHARACTERISTIC, type Button, type DeviceKind, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
+import { DEFAULT_RESOLUTION, DEVICE_RESOLUTION, encodeNutrition, parseButton, parseFrame, WEIGHT_CHARACTERISTIC, WRITE_CHARACTERISTIC, type Button, type DeviceKind, type Nutrition, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
 import type { ScaleTransport } from './transport.js';
 
 /** One decoded weight notification. Fields that aren't decoded are absent, never guessed. */
@@ -111,7 +111,7 @@ const safely = (fn: () => void) => {
 
 /**
  * Live weight readings from the scale over any {@link ScaleTransport}.
- * Read-only: it subscribes to weight notifications and never writes to the scale.
+ * It subscribes to weight notifications. The only write is {@link Scale.setNutrition}, on HUAJUN.
  * One instance covers one connection; create a new `Scale` to reconnect.
  */
 export class Scale {
@@ -120,6 +120,10 @@ export class Scale {
   #disconnectListeners = new Set<() => void>();
   #closers = new Set<() => void>();
   #open = false;
+  /** Set once `connect()` has subscribed, cleared when the connection ends. */
+  #connected = false;
+  /** The device of the first decoded frame, so writes go only to a scale known to accept them. */
+  #device?: DeviceKind;
 
   constructor(private transport: ScaleTransport, private options: ScaleOptions = {}) {
     checkResolution(options.resolution ?? {});
@@ -132,6 +136,7 @@ export class Scale {
       await this.transport.connect();
       this.transport.onDisconnect(() => this.#close());
       await this.transport.subscribe(WEIGHT_CHARACTERISTIC, (data) => this.#handle(data));
+      this.#connected = this.#open;
     } catch (err) {
       this.#close();
       throw err;
@@ -142,6 +147,28 @@ export class Scale {
   async disconnect(): Promise<void> {
     await this.transport.disconnect();
     this.#close();
+  }
+
+  /**
+   * Set the HUAJUN display's nutrition counters (calories, protein, fat, carbohydrate). The values
+   * stay on the display until the connection ends, so call it again after reconnecting and to
+   * update them. Values are rounded to 0.1.
+   *
+   * Throws if not connected, if the transport has no `write`, if a value is out of range
+   * (`RangeError`, see {@link encodeNutrition}), or unless the scale is known to be HUAJUN: with
+   * `device: 'auto'`, wait for the first reading (or button press), or pass `device: 'huajun'`.
+   */
+  async setNutrition(nutrition: Nutrition): Promise<void> {
+    if (!this.#connected) throw new Error('Not connected');
+    if (!this.transport.write) throw new Error('This transport cannot write');
+    const { device = 'auto' } = this.options;
+    const known = device === 'auto' ? this.#device : device;
+    if (known !== 'huajun') {
+      throw new Error(known === undefined
+        ? 'Scale not identified yet: wait for the first reading, or pass device: \'huajun\''
+        : `Writing nutrition is only supported on HUAJUN, not ${known}`);
+    }
+    await this.transport.write(WRITE_CHARACTERISTIC, encodeNutrition(nutrition, known));
   }
 
   /** Call `cb` for every valid reading. Returns an unsubscribe function. A throwing callback is logged and doesn't affect others. */
@@ -196,6 +223,7 @@ export class Scale {
   #close(): void {
     if (!this.#open) return;
     this.#open = false;
+    this.#connected = false;
     this.#closers.forEach((close) => close());
     this.#disconnectListeners.forEach((cb) => safely(cb));
   }
@@ -207,10 +235,12 @@ export class Scale {
       const button = result.rejection.reason === 'control-frame' ? parseButton(data, device) : undefined;
       if (!button) return this.options.onRejected?.(data, result.rejection);
       // Only HUAJUN reports buttons (parseButton).
+      this.#device ??= 'huajun';
       const press: ButtonPress = { device: 'huajun', button, raw: data, ...this.#now() };
       for (const cb of this.#buttonListeners) safely(() => cb(press));
       return;
     }
+    this.#device ??= result.frame.device;
     const reading = toReading(result.frame, this.#now(), this.options.resolution);
     for (const cb of this.#listeners) safely(() => cb(reading));
   }

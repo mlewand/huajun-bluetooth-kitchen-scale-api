@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm test` runs all vitest tests. For a single file use `npx vitest run test/parse.test.ts`, and for a single test add `-t "<name>"`.
 - `npm run typecheck` runs `tsc` over `src`, `test` and `demo` with no emit.
 - `npm run build` runs `tsc -p tsconfig.build.json` and writes to `dist/`. `src/cli` is excluded, so CLI code never ships.
-- `npm run capture -- --label x --out captures/<device> [--duration 20] [--name NSCALE]`, `npm run watch [-- --device huajun|alpha|auto] [--resolution g=0.1,oz=0.05]`, `npm run try-nutrition [-- --values 100,2,3,4,27,5] [--resend 6] [--label x]` (HUAJUN experiment: queries the model ID and writes one nutrition frame) and `npm run demo` need real hardware. You can't verify them here, so typecheck them and leave hardware testing to the user. `--out` defaults to the top-level `captures/`, so always pass the device folder.
+- `npm run capture -- --label x --out captures/<device> [--duration 20] [--name NSCALE]`, `npm run watch [-- --device huajun|alpha|auto] [--resolution g=0.1,oz=0.05] [--nutrition 100,2,3,4]`, `npm run try-nutrition [-- --values 100,2,3,4] [--resend 6] [--label x]` (HUAJUN experiment: queries the model ID, which the library never does, and writes one nutrition frame) and `npm run demo` need real hardware. You can't verify them here, so typecheck them and leave hardware testing to the user. `--out` defaults to the top-level `captures/`, so always pass the device folder.
 
 ## Architecture
 
@@ -21,6 +21,7 @@ The library has three layers, and each entry point maps to a `package.json` subp
    - `#close()` is idempotent. It ends every `readings()` iterator and fires `onDisconnect` once, whether the connection ended through a device drop, `disconnect()` or a failed `connect()`.
    - `readings()` starts buffering as soon as it's called, so callers create it before `connect()`.
    - Listener exceptions are caught and logged with `console.error`, so one bad callback doesn't affect the others.
+   - `setNutrition()` is the only write. It writes `encodeNutrition()`'s frame to `WRITE_CHARACTERISTIC` (FFB1) through the optional `ScaleTransport.write`, and only once the scale is known to be HUAJUN (explicit `device`, or the device of the first decoded frame), so nothing is ever written to alpha.
    - Button presses (HUAJUN `+Plate`/`Total`) are control frames: `parseFrame` rejects them as `control-frame`, then `Scale` tries `parseButton` and sends a match to `onButton` rather than `onRejected`.
 3. **Transports** implement `ScaleTransport` (`src/transport.ts`). The library passes UUIDs around as full lowercase 128-bit strings.
    - `src/node/` contains `NobleTransport` on `@stoprocent/noble`. noble reports UUIDs dashless in whatever form the device declares (HUAJUN short `ffb2`, alpha full 128-bit), so it expands them to the full form before comparing. `discovery.ts` (scan by name, power-state hints) is shared with the capture CLI.

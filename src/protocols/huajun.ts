@@ -1,4 +1,4 @@
-import type { Button, ParseResult, ParsedFrame, Unit } from '../parse.js';
+import type { Button, Nutrition, ParseResult, ParsedFrame, Unit } from '../parse.js';
 
 /** Unit codes are the high nibble of byte 5 (confirmed by cycling UNIT on an empty scale). */
 const UNITS: Record<number, Unit> = { 0: 'g', 1: 'ml', 2: 'lb:oz', 3: 'oz', 4: 'fl.oz' };
@@ -50,4 +50,29 @@ export function parseHuajunButton(bytes: Uint8Array): Button | undefined {
   if (bytes.length !== FRAME_LENGTH || bytes[0] !== HEADER || bytes[1] !== FRAME_TYPE || bytes[2] !== CONTROL) return undefined;
   if (bytes[3] !== BUTTON_EVENT || bytes[5] !== 0 || bytes[6] !== 0) return undefined;
   return BUTTONS[bytes[4]!];
+}
+
+/** Largest value a nutrition field can carry: 24 bits in tenths. */
+export const MAX_NUTRITION_VALUE = 0xffffff / 10;
+
+/**
+ * Encode the `AD 01` frame that sets the HUAJUN display's nutrition counters: `AD 01`, then six
+ * 24-bit big-endian values of round(value × 10), no checksum. The display shows the first four
+ * (calories, protein, fat, carbohydrate); the vendor app also sends energy from fat (fat × 9) and
+ * fiber, which this scale doesn't display, so they are fat × 9 (capped at the maximum) and 0 here.
+ */
+export function encodeHuajunNutrition(n: Nutrition): Uint8Array {
+  const fields = ['calories', 'protein', 'fat', 'carbohydrate'] as const;
+  const values = fields.map((name) => {
+    const v = n[name];
+    if (!Number.isFinite(v) || v < 0 || v > MAX_NUTRITION_VALUE) throw new RangeError(`Nutrition ${name} must be from 0 to ${MAX_NUTRITION_VALUE}, got ${v}`);
+    return v;
+  });
+  const frame = new Uint8Array(20);
+  frame.set([0xad, 0x01]);
+  [...values, Math.min(n.fat * 9, MAX_NUTRITION_VALUE), 0].forEach((v, i) => {
+    const q = Math.round(v * 10);
+    frame.set([(q >> 16) & 0xff, (q >> 8) & 0xff, q & 0xff], 2 + i * 3);
+  });
+  return frame;
 }

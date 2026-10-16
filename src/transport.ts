@@ -9,4 +9,10 @@ export interface ScaleTransport {
   subscribe(characteristic: string, onData: (data: Uint8Array) => void): Promise<void>;
   /** Called by `Scale` after `connect()` resolves. Must fire when the device drops or `disconnect()` is called. */
   onDisconnect(cb: () => void): void;
+  /**
+   * Optional. Write `data` to `characteristic` (a full lowercase 128-bit UUID), without response
+   * where the characteristic supports it. Only needed for `Scale.setNutrition`, which throws if the
+   * transport doesn't implement it.
+   */
+  write?(characteristic: string, data: Uint8Array): Promise<void>;
 }

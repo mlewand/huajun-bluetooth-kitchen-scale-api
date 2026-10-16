@@ -4,7 +4,7 @@ export const bytes = (hex: string) => Uint8Array.from(hex.split(' '), (b) => par
 
 /** Transport that replays frames once subscribed, then optionally disconnects. */
 export class FakeTransport implements ScaleTransport {
-  writes = 0;
+  written: { characteristic: string; data: Uint8Array }[] = [];
   subscribedTo: string[] = [];
   #onData?: (d: Uint8Array) => void;
   #onDisconnect?: () => void;
@@ -20,5 +20,6 @@ export class FakeTransport implements ScaleTransport {
     });
   }
   onDisconnect(cb: () => void) { this.#onDisconnect = cb; }
+  async write(characteristic: string, data: Uint8Array) { this.written.push({ characteristic, data }); }
   emit(d: Uint8Array) { this.#onData?.(d); }
 }

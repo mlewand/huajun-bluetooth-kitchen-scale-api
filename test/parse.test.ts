@@ -76,6 +76,13 @@ describe('parseFrame', () => {
     expect(parseButton(bytes(hex), 'alpha')).toBeUndefined();
   });
 
+  it('rejects the model ID reply as a control frame, not a button', () => {
+    // Reply to the model ID query sent by the try-nutrition experiment (model 21).
+    const reply = bytes('AC 05 FE 1D 00 15 CC C4');
+    expect(parseFrame(reply)).toEqual({ ok: false, rejection: { reason: 'control-frame', type: 0x1d } });
+    expect(parseButton(reply)).toBeUndefined();
+  });
+
   it('finds no button in other frames', () => {
     expect(weights.every(({ hex }) => parseButton(bytes(hex)) === undefined)).toBe(true);
     for (const hex of [

@@ -1,4 +1,4 @@
-import type { Peripheral } from '@stoprocent/noble';
+import type { Characteristic, Peripheral } from '@stoprocent/noble';
 import { DEVICE_NAMES, type DeviceKind } from '../parse.js';
 import type { ScaleTransport } from '../transport.js';
 import { findByName, waitForPoweredOn } from './discovery.js';
@@ -30,6 +30,7 @@ const fromNobleUuid = (uuid: string) => {
 /** Node transport built on `@stoprocent/noble` (optional peer dependency). Scans for the scale by advertised name (either known name by default). */
 export class NobleTransport implements ScaleTransport {
   #peripheral?: Peripheral;
+  #characteristics: Promise<Characteristic[]> | undefined;
 
   constructor(private options: NobleTransportOptions = {}) {}
 
@@ -38,6 +39,7 @@ export class NobleTransport implements ScaleTransport {
     const { name, device = 'auto', scanTimeoutMs = 20_000 } = this.options;
     const names = name !== undefined ? [name] : device === 'auto' ? Object.values(DEVICE_NAMES) : [DEVICE_NAMES[device]];
     this.#peripheral = await findByName(names, scanTimeoutMs);
+    this.#characteristics = undefined;
     await this.#peripheral.connectAsync();
   }
 
@@ -46,14 +48,25 @@ export class NobleTransport implements ScaleTransport {
   }
 
   async subscribe(characteristic: string, onData: (data: Uint8Array) => void): Promise<void> {
-    // No UUID filter: noble's filter matches the reported form literally, so a short `ffb2` filter
-    // drops alpha's 128-bit characteristic. Discover everything and compare normalised UUIDs instead.
-    const { characteristics } = await this.#peripheral!.discoverAllServicesAndCharacteristicsAsync();
-    const wanted = characteristic.toLowerCase();
-    const c = characteristics.find((ch) => fromNobleUuid(ch.uuid) === wanted);
-    if (!c) throw new Error(`Characteristic ${characteristic} not found`);
+    const c = await this.#find(characteristic);
     c.on('data', (data: Uint8Array) => onData(new Uint8Array(data)));
     await c.subscribeAsync();
+  }
+
+  /** Writes without response where the characteristic allows it (HUAJUN's `FFB1` does). */
+  async write(characteristic: string, data: Uint8Array): Promise<void> {
+    const c = await this.#find(characteristic);
+    await c.writeAsync(Buffer.from(data), c.properties.includes('writeWithoutResponse'));
+  }
+
+  async #find(characteristic: string): Promise<Characteristic> {
+    // No UUID filter: noble's filter matches the reported form literally, so a short `ffb2` filter
+    // drops alpha's 128-bit characteristic. Discover everything once and compare normalised UUIDs instead.
+    this.#characteristics ??= this.#peripheral!.discoverAllServicesAndCharacteristicsAsync().then((r) => r.characteristics);
+    const wanted = characteristic.toLowerCase();
+    const c = (await this.#characteristics).find((ch) => fromNobleUuid(ch.uuid) === wanted);
+    if (!c) throw new Error(`Characteristic ${characteristic} not found`);
+    return c;
   }
 
   onDisconnect(cb: () => void): void {

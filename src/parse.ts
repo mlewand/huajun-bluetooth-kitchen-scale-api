@@ -1,10 +1,13 @@
 import { ALPHA_FRAME_LENGTH, parseAlpha } from './protocols/alpha.js';
-import { HUAJUN_FRAME_LENGTH, parseHuajun, parseHuajunButton } from './protocols/huajun.js';
+import { encodeHuajunNutrition, HUAJUN_FRAME_LENGTH, parseHuajun, parseHuajunButton } from './protocols/huajun.js';
 
 /** GATT service that carries the scale's data (full lowercase 128-bit UUID). */
 export const SERVICE_UUID = '0000ffb0-0000-1000-8000-00805f9b34fb';
 /** Notify characteristic (`FFB2`) that carries weight frames. The only one the library subscribes to. */
 export const WEIGHT_CHARACTERISTIC = '0000ffb2-0000-1000-8000-00805f9b34fb';
+
+/** Write characteristic (`FFB1`). The only write the library makes is {@link encodeNutrition}'s frame, on HUAJUN. */
+export const WRITE_CHARACTERISTIC = '0000ffb1-0000-1000-8000-00805f9b34fb';
 
 /** Display unit of the scale. */
 export type Unit = 'g' | 'ml' | 'lb:oz' | 'oz' | 'fl.oz';
@@ -14,6 +17,21 @@ export type DeviceKind = 'huajun' | 'alpha';
 
 /** A button on the scale that reports its presses: HUAJUN `+Plate` (`'plate'`) and `Total` (`'total'`). */
 export type Button = 'plate' | 'total';
+
+/**
+ * Values for the HUAJUN display's nutrition counters, in the units the display shows. Each must be
+ * from 0 to 1677721.5; the scale stores tenths, so values are rounded to 0.1.
+ */
+export interface Nutrition {
+  /** Energy, kcal. */
+  calories: number;
+  /** Protein, g. */
+  protein: number;
+  /** Fat, g. */
+  fat: number;
+  /** Carbohydrate, g. */
+  carbohydrate: number;
+}
 
 /** Advertised Bluetooth name of each supported scale. */
 export const DEVICE_NAMES: Record<DeviceKind, string> = { huajun: 'NSCALE', alpha: 'MY_SCALE' };
@@ -106,4 +124,16 @@ export function parseFrame(bytes: Uint8Array, device: DeviceKind | 'auto' = 'aut
  */
 export function parseButton(bytes: Uint8Array, device: DeviceKind | 'auto' = 'auto'): Button | undefined {
   return device === 'alpha' ? undefined : parseHuajunButton(bytes);
+}
+
+/**
+ * Encode the frame that sets the scale's nutrition counters, to be written to
+ * {@link WRITE_CHARACTERISTIC}. Pure and platform-agnostic; `Scale.setNutrition` uses it.
+ *
+ * Only HUAJUN is supported (confirmed on its display), so `device` must be `'huajun'`. Throws a
+ * `RangeError` if a value isn't a finite number from 0 to 1677721.5.
+ */
+export function encodeNutrition(nutrition: Nutrition, device: DeviceKind = 'huajun'): Uint8Array {
+  if (device !== 'huajun') throw new Error(`Writing nutrition is only supported on HUAJUN, not ${device}`);
+  return encodeHuajunNutrition(nutrition);
 }

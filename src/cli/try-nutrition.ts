@@ -1,32 +1,30 @@
 /**
  * Experiment (HUAJUN only, never shipped): query the scale's model ID and write one nutrition
- * frame to its display counters, while logging everything the scale sends.
+ * frame (`encodeNutrition`) to its display counters, while logging everything the scale sends.
  *
- *   npm run try-nutrition [-- --values 100,2,3,4,27,5] [--resend 6] [--duration 40] [--label x]
+ *   npm run try-nutrition [-- --values 100,2,3,4] [--resend 6] [--duration 40] [--label x]
  *
- * --values  Six numbers for the `AD 01` frame, in this order: energy (kcal), protein (g), fat (g),
- *           carbohydrate (g), energy from fat (kcal), fiber (g). Every value is distinct by default
+ * --values  Calories (kcal), protein, fat and carbohydrate (g). Every value is distinct by default
  *           so each display counter shows which field it reads.
  * --resend  Resend the nutrition frame every N seconds (the vendor app resends every 6 s).
  *           0 (default) sends it once, to see whether the display keeps it.
  * --label   Also save the session to captures/huajun/<label>.jsonl. Received frames use the
  *           capture format; frames this script wrote carry `"write": true`.
  *
- * Frame layouts come from a decompiled vendor app (SmartApple 3.3.0), not from captures:
- * model ID query `AC 05 FE 1D 00 00 CC E7`, reply `AC 05 FE 1D hi lo ?? ??`; nutrition
- * `AD 01` followed by six 24-bit big-endian values of round(value × 10), no checksum.
+ * The model ID query `AC 05 FE 1D 00 00 CC E7` and its reply `AC 05 FE 1D hi lo ?? ??` come from a
+ * decompiled vendor app (SmartApple 3.3.0). The library itself never sends the query.
  */
 import { parseArgs } from 'node:util';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
 import type { Characteristic } from '@stoprocent/noble';
-import { DEVICE_NAMES, parseButton, parseFrame } from '../parse.js';
+import { DEVICE_NAMES, encodeNutrition, parseButton, parseFrame, type Nutrition } from '../parse.js';
 import { findByName, waitForPoweredOn } from '../node/discovery.js';
 
 const { values: args } = parseArgs({
   options: {
     name: { type: 'string', default: DEVICE_NAMES.huajun },
-    values: { type: 'string', default: '100,2,3,4,27,5' },
+    values: { type: 'string', default: '100,2,3,4' },
     resend: { type: 'string', default: '0' },
     duration: { type: 'string', default: '40' },
     label: { type: 'string' },
@@ -35,8 +33,7 @@ const { values: args } = parseArgs({
   },
 });
 
-const FIELDS = ['energy', 'protein', 'fat', 'carbohydrate', 'energy from fat', 'fiber'];
-const MAX_VALUE = 0xffffff / 10;
+const FIELDS = ['calories', 'protein', 'fat', 'carbohydrate'] as const;
 const DID_QUERY = [0xac, 0x05, 0xfe, 0x1d, 0x00, 0x00, 0xcc, 0xe7];
 /** Model IDs the vendor app knows, from its class names and nutrition lists. */
 const MODELS: Record<number, string> = {
@@ -56,24 +53,18 @@ const shortUuid = (uuid: string) => {
   return hex.length === 32 ? hex.slice(4, 8) : hex.slice(-4);
 };
 
-const nutrition = args.values.split(',').map(Number);
-if (nutrition.length !== 6 || nutrition.some((v) => !Number.isFinite(v) || v < 0 || v > MAX_VALUE)) {
-  fail(`--values needs six numbers from 0 to ${MAX_VALUE} (${FIELDS.join(', ')})`);
+const numbers = args.values.split(',').map(Number);
+if (numbers.length !== FIELDS.length) fail(`--values needs ${FIELDS.length} numbers: ${FIELDS.join(', ')}`);
+const nutrition = Object.fromEntries(FIELDS.map((name, i) => [name, numbers[i]])) as unknown as Nutrition;
+let frame: Uint8Array;
+try {
+  frame = encodeNutrition(nutrition);
+} catch (err) {
+  fail(`--values: ${err instanceof Error ? err.message : err}`);
 }
 const resendMs = Number(args.resend) * 1000;
 const durationMs = Number(args.duration) * 1000;
 if (!(resendMs >= 0) || !(durationMs > 0)) fail('--resend and --duration need numbers of seconds');
-
-/** `AD 01` + six big-endian 24-bit values of round(value × 10). */
-function nutritionFrame(values: number[]): Uint8Array {
-  const frame = new Uint8Array(20);
-  frame.set([0xad, 0x01]);
-  values.forEach((v, i) => {
-    const q = Math.round(v * 10);
-    frame.set([(q >> 16) & 0xff, (q >> 8) & 0xff, q & 0xff], 2 + i * 3);
-  });
-  return frame;
-}
 
 async function main() {
   await waitForPoweredOn(10_000);
@@ -146,8 +137,7 @@ async function main() {
 
   // The vendor app waits about 3 s after the first weight frames before sending nutrition.
   await sleep(2000);
-  const frame = nutritionFrame(nutrition);
-  const label = nutrition.map((v, i) => `${FIELDS[i]} ${v}`).join(', ');
+  const label = FIELDS.map((name) => `${name} ${nutrition[name]}`).join(', ');
   let timer: NodeJS.Timeout | undefined;
   if (!stopped) {
     await send(frame, `nutrition: ${label}`);

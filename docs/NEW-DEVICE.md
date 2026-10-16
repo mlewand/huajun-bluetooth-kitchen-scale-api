@@ -1,6 +1,6 @@
 # Adding a device driver
 
-A driver is one pure decoder plus a few table entries. The transports, `Scale` and `toReading()` need no changes. Read [AGENTS.md](../AGENTS.md) first: the library is read-only toward the scale and decodes only what captures prove.
+A driver is one pure decoder plus a few table entries. The transports, `Scale` and `toReading()` need no changes. Writing (`setNutrition`) is a separate decision per device: it stays HUAJUN-only until a write is confirmed on the new scale's display. Read [AGENTS.md](../AGENTS.md) first: the library decodes only what captures prove, and writes only what was confirmed on a display.
 
 ## 1. Capture and document
 

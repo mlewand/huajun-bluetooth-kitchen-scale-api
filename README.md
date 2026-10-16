@@ -1,6 +1,6 @@
 # @mlewand/huajun-ble-scale
 
-TypeScript library that reads live weight from Bluetooth LE kitchen scales: HUAJUN (advertised as `NSCALE`, 5000 g / 0.1 g) and the "alpha" scale (advertised as `MY_SCALE`, 5000 g / 1 g). Works in Node (macOS) and in Capacitor/Web Bluetooth. Both scales use the same GATT service and characteristic, so by default (`device: 'auto'`) the library tells them apart by frame length; pass `device: 'huajun'` or `device: 'alpha'` to `Scale` and the transport to pin one. Read-only: it only subscribes to notifications and never writes to the scale.
+TypeScript library that reads live weight from Bluetooth LE kitchen scales: HUAJUN (advertised as `NSCALE`, 5000 g / 0.1 g) and the "alpha" scale (advertised as `MY_SCALE`, 5000 g / 1 g). Works in Node (macOS) and in Capacitor/Web Bluetooth. Both scales use the same GATT service and characteristic, so by default (`device: 'auto'`) the library tells them apart by frame length; pass `device: 'huajun'` or `device: 'alpha'` to `Scale` and the transport to pin one. It mostly reads: the one thing it writes is nutrition values (calories, protein, fat, carbohydrate) to the HUAJUN display's counters, and only when you call `setNutrition`.
 
 **Unofficial.** This project is not affiliated with or endorsed by HUAJUN or any other scale maker. Brand names are trademarks of their owners and are used only to say which hardware the library works with.
 
@@ -37,6 +37,16 @@ await scale.connect();
 for await (const r of readings) console.log(r); // ends when the connection ends (or connect() fails)
 ```
 
+To fill the HUAJUN display's nutrition counters (they stay until the connection ends):
+
+```ts
+const scale = new Scale(new NobleTransport({ device: 'huajun' }), { device: 'huajun' });
+await scale.connect();
+await scale.setNutrition({ calories: 100, protein: 2, fat: 3, carbohydrate: 4 }); // kcal, g, g, g
+```
+
+With `device: 'auto'` instead, `setNutrition` rejects until a first reading shows the scale is a HUAJUN; it doesn't wait for one.
+
 Full reference: [docs/API.md](docs/API.md). To support another scale, see [docs/NEW-DEVICE.md](docs/NEW-DEVICE.md).
 
 A `Reading` has `device`, `grams` (only when the display unit is g), `value`, `unit`, `stable`, `raw` (the undecoded frame), `receivedAt` (`Date.now()`) and `receivedAtMonotonic` (a monotonic clock, for durations). `value` and `grams` are rounded to what the scale's display shows (alpha: 1 g, HUAJUN: 0.1 g); pass `resolution: { g: 0.1 }` to `Scale` for more, see [Resolution](docs/API.md#resolution). Fields that aren't decoded are absent. Frames that fail validation (wrong length, header, frame type or checksum) are dropped and reported to `onRejected`.
@@ -56,7 +66,7 @@ On macOS the terminal app needs Bluetooth permission (System Settings > Privacy 
 
 ## Protocol
 
-Both scales: service `0000ffb0-…`, notifications on `FFB2`, no writes needed.
+Both scales: service `0000ffb0-…`, notifications on `FFB2`. Reading needs no writes.
 
 ### HUAJUN (`NSCALE`)
 
@@ -74,6 +84,10 @@ Both scales: service `0000ffb0-…`, notifications on `FFB2`, no writes needed.
 | 7 | Unknown; not a checksum of bytes 0–6 | unverified |
 
 Control frames are `AC 05 FE 1E xx 00 00 ??`: `xx` is `03` for the `+Plate` button and `04` for `Total`. They aren't weights: `Scale.onButton` delivers them as `'plate'` and `'total'`, and `parseButton` decodes them from raw bytes. Control frames with other codes are rejected as `control-frame`. `UNIT` shows up only as the unit change in the next weight frames, and `TARE` on an empty scale sends nothing.
+
+#### Writing nutrition (HUAJUN)
+
+Written to `FFB1` without response, 20 bytes, no checksum: `AD 01`, then six 24-bit big-endian values of round(value × 10). Confirmed on the display (model ID 21): calories (kcal), protein, fat and carbohydrate (g), shown with one decimal and kept until the connection ends. The last two values (energy from fat and fiber, as the vendor app sends them) aren't displayed. The layout comes from the vendor app; `npm run try-nutrition` is the experiment that confirmed it.
 
 ### alpha (`MY_SCALE`)
 

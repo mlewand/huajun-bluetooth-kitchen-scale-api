@@ -23,3 +23,10 @@ Recorded later, with the battery indicator at 1 of 5 bars (low) in every run. Th
 | changed-g-to-ml | g, cycled to ml | 68.9 ml | UNIT pressed several times (g → lb:oz → oz → ml), then the item placed. The display showed other values briefly before settling. One frame between oz and ml was `AC 05 00 00 00 14 CA`: ml unit code with byte 5 bits 1-3 = 2. |
 | changed-g-to-fl_oz | g, cycled to fl.oz | 2.32 fl.oz | Cycled g → lb:oz → oz → ml → fl.oz, then the item placed. |
 | grams-heavy-load | g | 4770.0 | Weights added in four steps. Byte 2 stayed `00` and the frames kept one decimal throughout. |
+
+## Writes (`npm run try-nutrition`)
+
+No JSONL was saved; this is from the console output the user reported.
+
+- Model ID query `AC 05 FE 1D 00 00 CC E7` → reply at 0.96 s: `AC 05 FE 1D 00 15 CC C4`, model ID 21 (`Nk965bt` in the vendor app, on its plate-total list).
+- Nutrition frame `AD 01 00 03 E8 00 00 14 00 00 1E 00 00 28 00 01 0E 00 00 32` (100, 2, 3, 4, 27, 5), sent once. The display showed calories 100.0 kcal, protein 2.0 g, fat 3.0 g, carbohydrate 4.0 g. Fields 5-6 (27, 5) appeared nowhere. The values stayed for as long as the connection lasted, without resending.

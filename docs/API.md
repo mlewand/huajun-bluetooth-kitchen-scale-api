@@ -6,7 +6,7 @@ Keep this file in sync with `src/` (enforced by `test/docs.test.ts`). For a quic
 
 | Import | Exports |
 |---|---|
-| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ButtonPress`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `parseButton`, `Button`, `Unit`, `DeviceKind`, `DEVICE_NAMES`, `Resolution`, `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC` |
+| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ButtonPress`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `parseButton`, `Button`, `encodeNutrition`, `Nutrition`, `Unit`, `DeviceKind`, `DEVICE_NAMES`, `Resolution`, `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC`, `WRITE_CHARACTERISTIC` |
 | `@mlewand/huajun-ble-scale/node` | `NobleTransport`, `NobleTransportOptions` |
 | `@mlewand/huajun-ble-scale/capacitor` | `CapacitorTransport`, `CapacitorTransportOptions` |
 
@@ -20,7 +20,7 @@ Two scales are supported, identified by `DeviceKind`: `'huajun'` (advertised as 
 new Scale(transport: ScaleTransport, options?: ScaleOptions)
 ```
 
-One instance covers one connection. To reconnect, create a new `Scale`. The scale is read-only: nothing is ever written to the device.
+One instance covers one connection. To reconnect, create a new `Scale`. The only thing ever written to the device is the nutrition frame of `setNutrition()`, and only to a HUAJUN scale.
 
 | Member | Description |
 |---|---|
@@ -28,6 +28,7 @@ One instance covers one connection. To reconnect, create a new `Scale`. The scal
 | `disconnect(): Promise<void>` | Disconnects. Ends pending iterators and fires `onDisconnect` callbacks. |
 | `onReading(cb): () => void` | Calls `cb(reading)` for every valid frame. Returns an unsubscribe function. A throwing callback is logged with `console.error` and doesn't affect other callbacks. |
 | `onButton(cb): () => void` | Calls `cb(press)` with a [`ButtonPress`](#buttonpress) for every button press the scale reports (HUAJUN `+Plate` and `Total`; alpha reports none). Returns an unsubscribe function. A throwing callback is logged with `console.error` and doesn't affect other callbacks. |
+| `setNutrition(nutrition): Promise<void>` | HUAJUN only. Sets the display's nutrition counters to a [`Nutrition`](#encodenutritionnutrition-nutrition-device-devicekind-uint8array) (calories, protein, fat, carbohydrate), rounded to 0.1. They stay on the display until the connection ends, so call it again after reconnecting, and to update them. Rejects if not connected, if the transport has no `write`, with a `RangeError` for out-of-range values, and unless the scale is known to be HUAJUN: pass `device: 'huajun'`, or with `'auto'` wait for the first reading or button press. Nothing is written when it rejects. |
 | `onDisconnect(cb): () => void` | Fires once when the connection ends: device drop, `disconnect()`, or failed `connect()`. Returns an unsubscribe function. |
 | `readings(): AsyncIterableIterator<Reading>` | Listening starts when it is called, so call it before `connect()`. The iterator ends when the connection ends; breaking out of a `for await` loop stops listening. Readings are queued without a limit, so consume them. |
 
@@ -126,12 +127,21 @@ Pure decoder for button presses, the counterpart of `parseFrame` (which rejects 
 
 HUAJUN button frames are `AC 05 FE 1E xx 00 00 ??`: `xx` is `03` for `+Plate` and `04` for `Total`. Other codes, and non-zero bytes 5-6, were never captured, so they give `undefined`. Byte 7 isn't checked.
 
+## `encodeNutrition(nutrition: Nutrition, device?: DeviceKind): Uint8Array`
+
+Pure encoder for the frame `setNutrition` writes to `WRITE_CHARACTERISTIC`, for use with your own BLE layer. `device` defaults to `'huajun'`, the only scale it supports; any other device throws.
+
+`Nutrition` is `{ calories, protein, fat, carbohydrate }`, in kcal and grams, as the HUAJUN display shows them. All four are required. Each must be a finite number from 0 to 1677721.5, otherwise it throws a `RangeError`.
+
+The frame is `AD 01` followed by six 24-bit big-endian values of round(value × 10), with no checksum: calories, protein, fat, carbohydrate, energy from fat, fiber. The vendor app fills the last two with fat × 9 and fiber. The HUAJUN display doesn't show them, so the library sends fat × 9 (capped at the maximum) and 0.
+
 ## Constants
 
 - `DEVICE_NAMES`: advertised name per device, `{ huajun: 'NSCALE', alpha: 'MY_SCALE' }`
 - `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `Resolution`: the display resolution per device and unit that `Reading.value` is rounded to; see [Resolution](#resolution)
 - `SERVICE_UUID`: `0000ffb0-0000-1000-8000-00805f9b34fb`
 - `WEIGHT_CHARACTERISTIC`: `0000ffb2-0000-1000-8000-00805f9b34fb`
+- `WRITE_CHARACTERISTIC`: `0000ffb1-0000-1000-8000-00805f9b34fb`, where `setNutrition` writes
 
 ## `ScaleTransport`
 
@@ -143,12 +153,14 @@ interface ScaleTransport {
   disconnect(): Promise<void>;
   subscribe(characteristic: string, onData: (data: Uint8Array) => void): Promise<void>;
   onDisconnect(cb: () => void): void;
+  write?(characteristic: string, data: Uint8Array): Promise<void>;
 }
 ```
 
 - `connect()` resolves once connected and ready for `subscribe()`.
 - `subscribe()` receives a full lowercase 128-bit UUID, and must deliver each notification as its own `Uint8Array`.
 - `onDisconnect()` is called by `Scale` after `connect()` resolves. It must fire when the device drops and when `disconnect()` is called.
+- `write()` is optional and only used by `setNutrition`. It receives a full lowercase 128-bit UUID and should write without response where the characteristic supports it. Both built-in transports implement it.
 
 ## `NobleTransport` (`/node`)
 

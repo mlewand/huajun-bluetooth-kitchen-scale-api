@@ -22,6 +22,6 @@ Run `npm run typecheck && npm test`. `test/docs.test.ts` fails if an exported na
 
 ## Rules
 
-- Writes to the scale need the write-side equivalent of a capture: the effect confirmed on the scale's display. Only nutrition values (HUAJUN display counters) are in scope; no tare, unit or other commands. Unconfirmed writes are experiments and belong in `src/cli/`, which is never shipped.
+- Writes to the scale need the write-side equivalent of a capture: the effect confirmed on the scale's display. Only nutrition values (HUAJUN display counters; `AD 01` fields 1-4 are confirmed) are in scope; no tare, unit or other commands. Unconfirmed writes are experiments and belong in `src/cli/`, which is never shipped.
 - Decode only what captures confirm; captured frames are fixtures copied verbatim.
 - Don't add dependencies to the core.
