@@ -1,12 +1,12 @@
-import { ALPHA_FRAME_LENGTH, parseAlpha } from './protocols/alpha.js';
-import { encodeHuajunNutrition, HUAJUN_FRAME_LENGTH, parseHuajun, parseHuajunButton } from './protocols/huajun.js';
+import { ALPHA_FRAME_LENGTH, encodeAlphaNutrition, parseAlpha } from './protocols/alpha.js';
+import { encodeHuajunNutrition, HUAJUN_FRAME_LENGTH, MAX_NUTRITION_VALUE, parseHuajun, parseHuajunButton } from './protocols/huajun.js';
 
 /** GATT service that carries the scale's data (full lowercase 128-bit UUID). */
 export const SERVICE_UUID = '0000ffb0-0000-1000-8000-00805f9b34fb';
 /** Notify characteristic (`FFB2`) that carries weight frames. The only one the library subscribes to. */
 export const WEIGHT_CHARACTERISTIC = '0000ffb2-0000-1000-8000-00805f9b34fb';
 
-/** Write characteristic (`FFB1`). The only write the library makes is {@link encodeNutrition}'s frame, on HUAJUN. */
+/** Write characteristic (`FFB1`). The only writes the library makes are {@link encodeNutrition}'s frames. */
 export const WRITE_CHARACTERISTIC = '0000ffb1-0000-1000-8000-00805f9b34fb';
 
 /** Display unit of the scale. */
@@ -19,8 +19,10 @@ export type DeviceKind = 'huajun' | 'alpha';
 export type Button = 'plate' | 'total';
 
 /**
- * Values for the HUAJUN display's nutrition counters, in the units the display shows. Each must be
- * from 0 to 1677721.5; the scale stores tenths, so values are rounded to 0.1.
+ * Nutrition values to show on the scale's display, for {@link encodeNutrition} and
+ * `Scale.setNutrition`. Each must be a finite number from 0 to 1677721.5. Protein, fat and
+ * carbohydrate are rounded to 0.1 g on both scales; calories to 0.1 kcal on HUAJUN and to 1 kcal on
+ * alpha, which sends whole kcal.
  */
 export interface Nutrition {
   /** Energy, kcal. */
@@ -35,6 +37,12 @@ export interface Nutrition {
 
 /** Advertised Bluetooth name of each supported scale. */
 export const DEVICE_NAMES: Record<DeviceKind, string> = { huajun: 'NSCALE', alpha: 'MY_SCALE' };
+
+/**
+ * Which scales can show nutrition values written by {@link encodeNutrition}. `Scale.setNutrition`
+ * ignores the request (writes nothing) for a scale marked `false`.
+ */
+export const NUTRITION_SUPPORT: Record<DeviceKind, boolean> = { huajun: true, alpha: true };
 
 /** Step size per display unit that a weight is rounded to, in that unit (for example `{ g: 0.1 }`). */
 export type Resolution = Partial<Record<Unit, number>>;
@@ -80,8 +88,13 @@ export interface ParsedFrame {
 export type Rejection =
   | { reason: 'bad-length'; length: number }
   | { reason: 'bad-header'; header: number }
-  /** Byte 1 isn't the frame type: `0x05` for HUAJUN, `0x41` for alpha. */
+  /** Byte 1 isn't the frame type: `0x05` for HUAJUN, the `0x41` device byte for alpha. */
   | { reason: 'unknown-frame-type'; type: number }
+  /**
+   * alpha only: a valid frame whose type in byte 18 isn't `0xA6` (weight), for example `0xA0`
+   * device info. `type` is byte 18.
+   */
+  | { reason: 'not-weight-frame'; type: number }
   /**
    * HUAJUN only: byte 2 is `0xFE`, a control frame rather than a weight. `type` is byte 3 (`0x1E`
    * for button presses). {@link parseButton} decodes the known buttons, and `Scale` delivers those
@@ -103,7 +116,8 @@ export type ParseResult = { ok: true; frame: ParsedFrame } | { ok: false; reject
  *
  * Both decoders validate length, the `0xAC` header and the frame type in byte 1. HUAJUN control
  * frames (button events) are rejected as `control-frame`, and HUAJUN frames have no checksum
- * (byte 7 has no known formula). alpha frames are also checked for their checksum.
+ * (byte 7 has no known formula). alpha frames are also checked for their checksum, and frames
+ * other than weights (byte 18 isn't `0xA6`) are rejected as `not-weight-frame`.
  */
 export function parseFrame(bytes: Uint8Array, device: DeviceKind | 'auto' = 'auto'): ParseResult {
   if (device === 'auto') {
@@ -127,13 +141,30 @@ export function parseButton(bytes: Uint8Array, device: DeviceKind | 'auto' = 'au
 }
 
 /**
- * Encode the frame that sets the scale's nutrition counters, to be written to
- * {@link WRITE_CHARACTERISTIC}. Pure and platform-agnostic; `Scale.setNutrition` uses it.
+ * Throw a `RangeError` unless every {@link Nutrition} value is a finite number from 0 to
+ * 1677721.5, the range both scales can carry.
+ */
+export function checkNutrition(nutrition: Nutrition): void {
+  for (const name of ['calories', 'protein', 'fat', 'carbohydrate'] as const) {
+    const v = nutrition[name];
+    if (!Number.isFinite(v) || v < 0 || v > MAX_NUTRITION_VALUE) throw new RangeError(`Nutrition ${name} must be from 0 to ${MAX_NUTRITION_VALUE}, got ${v}`);
+  }
+}
+
+/**
+ * Encode the frames that show `nutrition` on the scale's display, to be written to
+ * {@link WRITE_CHARACTERISTIC} in order. Pure and platform-agnostic; `Scale.setNutrition` uses it.
  *
- * Only HUAJUN is supported (confirmed on its display), so `device` must be `'huajun'`. Throws a
+ * - HUAJUN: one frame that sets the display's four nutrition counters, which keep the values until
+ *   the connection ends.
+ * - alpha: the two frames of its nutrition command; the display then cycles calories, protein, fat
+ *   and carbohydrate twice and returns to the weight.
+ *
+ * Returns an empty list for a scale that can't show nutrition ({@link NUTRITION_SUPPORT}). Throws a
  * `RangeError` if a value isn't a finite number from 0 to 1677721.5.
  */
-export function encodeNutrition(nutrition: Nutrition, device: DeviceKind = 'huajun'): Uint8Array {
-  if (device !== 'huajun') throw new Error(`Writing nutrition is only supported on HUAJUN, not ${device}`);
-  return encodeHuajunNutrition(nutrition);
+export function encodeNutrition(nutrition: Nutrition, device: DeviceKind = 'huajun'): Uint8Array[] {
+  checkNutrition(nutrition);
+  if (!NUTRITION_SUPPORT[device]) return [];
+  return device === 'huajun' ? [encodeHuajunNutrition(nutrition)] : encodeAlphaNutrition(nutrition);
 }

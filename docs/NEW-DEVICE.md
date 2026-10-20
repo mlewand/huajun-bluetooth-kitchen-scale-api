@@ -1,6 +1,6 @@
 # Adding a device driver
 
-A driver is one pure decoder plus a few table entries. The transports, `Scale` and `toReading()` need no changes. Writing (`setNutrition`) is a separate decision per device: it stays HUAJUN-only until a write is confirmed on the new scale's display. Read [AGENTS.md](../AGENTS.md) first: the library decodes only what captures prove, and writes only what was confirmed on a display.
+A driver is one pure decoder plus a few table entries. The transports, `Scale` and `toReading()` need no changes. Writing (`setNutrition`) is a separate decision per device: the new scale ignores nutrition (`NUTRITION_SUPPORT` `false`) until a write is confirmed on its display. Read [AGENTS.md](../AGENTS.md) first: the library decodes only what captures prove, and writes only what was confirmed on a display.
 
 ## 1. Capture and document
 
@@ -28,6 +28,13 @@ In `src/parse.ts`:
 - if the scale reports button presses, add a `parse<X>Button` next to the decoder and dispatch to it in `parseButton`, and reject those frames in the weight decoder as `control-frame` so `Scale` routes them to `onButton`.
 
 Also: the `--device` check in `src/cli/watch.ts` lists the devices by hand, and the `DeviceKind` TSDoc in `src/node/index.ts` and `src/capacitor/index.ts` mentions device names. Transports pick the scan name from `DEVICE_NAMES` and need no change.
+
+## 3b. Nutrition (only once confirmed on the display)
+
+- Leave the device `false` in `NUTRITION_SUPPORT` (`src/parse.ts`) until a nutrition write is confirmed on the scale's display; `setNutrition` then ignores requests for it and resolves `false`.
+- Once confirmed: add `encodeXNutrition(n: Nutrition): Uint8Array[]` next to the decoder (all frames, in write order), dispatch to it in `encodeNutrition`, set the device to `true`, and add its connect delay to `NUTRITION_DELAY_MS` (`src/scale.ts`): how long after connecting the scale starts accepting the write (0 if it accepts it at once).
+- Built-in transports choose the write type from the characteristic's properties, so a write-only characteristic needs no change.
+- Test the encoder against the confirmed frames, and `Scale.setNutrition` for the delay (`test/nutrition.test.ts`).
 
 ## 4. Test
 

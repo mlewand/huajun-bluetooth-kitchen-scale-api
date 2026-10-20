@@ -4,8 +4,8 @@
  *   npm run watch [-- --device huajun|alpha|auto] [--name NSCALE] [--resolution g=0.1,oz=0.05]
  *                 [--nutrition 100,2,3,4]
  *
- * --nutrition  calories,protein,fat,carbohydrate: after the first reading, set the HUAJUN display's
- *              nutrition counters with `Scale.setNutrition` (which waits until 3 s after connecting)
+ * --nutrition  calories,protein,fat,carbohydrate: after the first reading, show them on the display
+ *              with `Scale.setNutrition` (HUAJUN keeps them; alpha cycles them twice)
  *              and print the outcome.
  */
 import { parseArgs } from 'node:util';
@@ -56,14 +56,16 @@ const scale = new Scale(transport, {
 
 scale.onButton((p) => console.log(`[button] ${p.button}`));
 
-// `--nutrition 100,2,3,4`: once the first reading has identified the scale, set its counters.
+// `--nutrition 100,2,3,4`: once the first reading has identified the scale, show them on its display.
 if (args.nutrition !== undefined) {
   const [calories, protein, fat, carbohydrate] = args.nutrition.split(',').map(Number);
   const nutrition = { calories, protein, fat, carbohydrate } as Nutrition;
   const off = scale.onReading(() => {
     off();
     scale.setNutrition(nutrition).then(
-      () => console.error(`[nutrition] sent ${args.nutrition} (calories, protein, fat, carbohydrate)`),
+      (sent) => console.error(sent
+        ? `[nutrition] sent ${args.nutrition} (calories, protein, fat, carbohydrate)`
+        : '[nutrition] this scale cannot show nutrition; nothing sent'),
       (err) => console.error(`[nutrition] failed: ${err instanceof Error ? err.message : err}`),
     );
   });

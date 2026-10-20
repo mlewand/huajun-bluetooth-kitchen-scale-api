@@ -11,6 +11,12 @@ const ble = vi.hoisted(() => {
     disconnect: async () => {},
     startNotifications: async () => {},
     writeWithoutResponse: async (_id: string, _service: string, _characteristic: string, _value: DataView) => {},
+    write: async (_id: string, _service: string, _characteristic: string, _value: DataView) => {},
+    // HUAJUN-like FFB1, which allows writing with and without response.
+    getServices: async (_id: string) => [{
+      uuid: '0000ffb0-0000-1000-8000-00805f9b34fb',
+      characteristics: [{ uuid: '0000ffb1-0000-1000-8000-00805f9b34fb', properties: { write: true, writeWithoutResponse: true }, descriptors: [] }],
+    }],
   };
   return {
     defaults,
@@ -21,6 +27,8 @@ const ble = vi.hoisted(() => {
     disconnect: vi.fn(defaults.disconnect),
     startNotifications: vi.fn(defaults.startNotifications),
     writeWithoutResponse: vi.fn(defaults.writeWithoutResponse),
+    write: vi.fn(defaults.write),
+    getServices: vi.fn(defaults.getServices),
   };
 });
 vi.mock('@capacitor-community/bluetooth-le', () => ({ BleClient: ble }));
@@ -39,6 +47,8 @@ describe('CapacitorTransport', () => {
     ble.disconnect.mockImplementation(ble.defaults.disconnect);
     ble.startNotifications.mockImplementation(ble.defaults.startNotifications);
     ble.writeWithoutResponse.mockImplementation(ble.defaults.writeWithoutResponse);
+    ble.write.mockImplementation(ble.defaults.write);
+    ble.getServices.mockImplementation(ble.defaults.getServices);
   });
 
   it('without a deviceId, asks the user to pick the scale and exposes the picked id', async () => {
@@ -169,5 +179,40 @@ describe('CapacitorTransport', () => {
     expect(ble.writeWithoutResponse).toHaveBeenCalledWith('known-id', '0000ffb0-0000-1000-8000-00805f9b34fb', '0000ffb1-0000-1000-8000-00805f9b34fb', expect.any(DataView));
     const view = ble.writeWithoutResponse.mock.calls[0]![3];
     expect(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)).toEqual(data);
+  });
+
+  it('writes with response when the characteristic allows only that (alpha)', async () => {
+    ble.getServices.mockImplementation(async () => [{
+      uuid: '0000ffb0-0000-1000-8000-00805f9b34fb',
+      characteristics: [{ uuid: '0000FFB1-0000-1000-8000-00805F9B34FB', properties: { write: true, writeWithoutResponse: false }, descriptors: [] }],
+    }]);
+    const transport = new CapacitorTransport({ deviceId: 'known-id' });
+    await transport.connect();
+    const data = Uint8Array.from([0xac, 0x41, 0x02, 0x00]);
+    await transport.write('0000ffb1-0000-1000-8000-00805f9b34fb', data);
+    expect(ble.writeWithoutResponse).not.toHaveBeenCalled();
+    expect(ble.write).toHaveBeenCalledWith('known-id', '0000ffb0-0000-1000-8000-00805f9b34fb', '0000ffb1-0000-1000-8000-00805f9b34fb', expect.any(DataView));
+    const view = ble.write.mock.calls[0]![3];
+    expect(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)).toEqual(data);
+  });
+
+  it("writes without response when the characteristic's properties can't be read", async () => {
+    ble.getServices.mockImplementation(async () => { throw new Error('not supported'); });
+    const transport = new CapacitorTransport({ deviceId: 'known-id' });
+    await transport.connect();
+    await transport.write('0000ffb1-0000-1000-8000-00805f9b34fb', Uint8Array.from([1]));
+    expect(ble.writeWithoutResponse).toHaveBeenCalledOnce();
+    expect(ble.write).not.toHaveBeenCalled();
+  });
+
+  it('reads the properties once per connection', async () => {
+    const transport = new CapacitorTransport({ deviceId: 'known-id' });
+    await transport.connect();
+    await transport.write('0000ffb1-0000-1000-8000-00805f9b34fb', Uint8Array.from([1]));
+    await transport.write('0000ffb1-0000-1000-8000-00805f9b34fb', Uint8Array.from([2]));
+    expect(ble.getServices).toHaveBeenCalledOnce();
+    await transport.connect();
+    await transport.write('0000ffb1-0000-1000-8000-00805f9b34fb', Uint8Array.from([3]));
+    expect(ble.getServices).toHaveBeenCalledTimes(2);
   });
 });

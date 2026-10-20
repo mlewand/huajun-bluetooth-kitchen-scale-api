@@ -53,7 +53,7 @@ export class NobleTransport implements ScaleTransport {
     await c.subscribeAsync();
   }
 
-  /** Writes without response where the characteristic allows it (HUAJUN's `FFB1` does). */
+  /** Writes without response where the characteristic allows it (HUAJUN's `FFB1`), otherwise with response (alpha's `FFB1`). */
   async write(characteristic: string, data: Uint8Array): Promise<void> {
     const c = await this.#find(characteristic);
     await c.writeAsync(Buffer.from(data), c.properties.includes('writeWithoutResponse'));

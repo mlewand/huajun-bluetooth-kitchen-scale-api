@@ -37,15 +37,15 @@ await scale.connect();
 for await (const r of readings) console.log(r); // ends when the connection ends (or connect() fails)
 ```
 
-To fill the HUAJUN display's nutrition counters (they stay until the connection ends):
+To show nutrition values on the display, the same call works on both scales:
 
 ```ts
-const scale = new Scale(new NobleTransport({ device: 'huajun' }), { device: 'huajun' });
+const scale = new Scale(new NobleTransport());
 await scale.connect();
-await scale.setNutrition({ calories: 100, protein: 2, fat: 3, carbohydrate: 4 }); // kcal, g, g, g; waits until 3 s after connect()
+await scale.setNutrition({ calories: 100, protein: 2, fat: 3, carbohydrate: 4 }); // kcal, g, g, g
 ```
 
-With `device: 'auto'` instead, `setNutrition` rejects until a first reading shows the scale is a HUAJUN; it doesn't wait for one.
+HUAJUN keeps the values on its four nutrition counters until the connection ends (the write waits until 3 s after `connect()`). alpha cycles them twice and returns to the weight, so send them for each item, typically on its first stable reading. With `device: 'auto'` a call made before the first reading waits for it to identify the scale. A scale that can't show nutrition ignores the request: `setNutrition` resolves `false` and writes nothing.
 
 Full reference: [docs/API.md](docs/API.md). To support another scale, see [docs/NEW-DEVICE.md](docs/NEW-DEVICE.md).
 
@@ -96,7 +96,7 @@ Written to `FFB1` without response, 20 bytes, no checksum: `AD 01`, then six 24-
 | Byte | Meaning | Status |
 |---|---|---|
 | 0 | Header `AC` | confirmed |
-| 1 | `41`, constant (frame type?) | meaning unknown |
+| 1 | `41`: the device byte the scale reports (it advertises `40`) | constant in every capture |
 | 2, bit 0 | Stable (1) or changing (0) | confirmed |
 | 2, bit 7 | Negative sign | seen in one capture (tare, then item removed) |
 | 2, bits 1–6 | Never set | unknown |
@@ -104,8 +104,12 @@ Written to `FFB1` without response, 20 bytes, no checksum: `AD 01`, then six 24-
 | 3, low nibble | Always 0 | unknown |
 | 4–6 | Weight magnitude, 24-bit big-endian, in milligrams whatever the display unit | confirmed against displays in g, oz, lb:oz and ml |
 | 7–17 | Always 0 | unknown |
-| 18 | Always `A6` | constant |
+| 18 | Frame type: `A6` weight. Other types (`A0` device info, `A1` ack) are rejected as `not-weight-frame`; the scale sends them only after commands the library doesn't send | confirmed |
 | 19 | Checksum: low byte of the sum of bytes 2–18 | confirmed on every captured frame |
+
+#### Writing nutrition (alpha)
+
+Two 20-byte frames written to `FFB1` with response (its only write type): `AC 41 <frame count> <index>`, 14 payload bytes, `D5`, checksum. The payload is a food ID (u32), a count, then per value a type and a 24-bit big-endian value: 0 calories (whole kcal), 1 fat, 2 carbohydrate, 5 protein (g × 10), the order the vendor app (FitDays) uses. Confirmed on the display: it cycles calories, protein, fat and carbohydrate twice, then returns to the weight. No handshake and no wait is needed (shown when written 1.3 s after connecting). The vendor app sends it on each item's first stable reading. The layout comes from an HCI snoop log of the vendor app and was confirmed with a one-off experiment script (not kept in the repo).
 
 The library converts the weight into the displayed unit (`ml` assumes water). After a value settles the scale sends about five stable frames and then stays silent until the weight changes. Tare is applied inside the scale: frames carry the net weight, and after tare with the item removed, the negated weight with the negative flag.
 
