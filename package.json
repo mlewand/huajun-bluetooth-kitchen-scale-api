@@ -11,6 +11,7 @@
     "capture": "tsx src/cli/capture.ts",
     "watch": "tsx src/cli/watch.ts",
     "try-nutrition": "tsx src/cli/try-nutrition.ts",
+    "try-alpha-nutrition": "tsx src/cli/try-alpha-nutrition.ts",
     "typecheck": "tsc",
     "test": "vitest run",
     "build": "tsc -p tsconfig.build.json",
