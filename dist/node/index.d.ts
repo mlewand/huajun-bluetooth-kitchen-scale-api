@@ -20,7 +20,7 @@ export declare class NobleTransport implements ScaleTransport {
     connect(): Promise<void>;
     disconnect(): Promise<void>;
     subscribe(characteristic: string, onData: (data: Uint8Array) => void): Promise<void>;
-    /** Writes without response where the characteristic allows it (HUAJUN's `FFB1` does). */
+    /** Writes without response where the characteristic allows it (HUAJUN's `FFB1`), otherwise with response (alpha's `FFB1`). */
     write(characteristic: string, data: Uint8Array): Promise<void>;
     onDisconnect(cb: () => void): void;
 }

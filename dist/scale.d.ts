@@ -73,7 +73,7 @@ export interface ScaleOptions {
 export declare function toReading(frame: ParsedFrame, times: ReceiveTimes, resolution?: Resolution): Reading;
 /**
  * Live weight readings from the scale over any {@link ScaleTransport}.
- * It subscribes to weight notifications. The only write is {@link Scale.setNutrition}, on HUAJUN.
+ * It subscribes to weight notifications. The only writes are {@link Scale.setNutrition}'s.
  * One instance covers one connection; create a new `Scale` to reconnect.
  */
 export declare class Scale {
@@ -86,19 +86,23 @@ export declare class Scale {
     /** Disconnect. Ends pending `readings()` iterators and fires `onDisconnect` callbacks. */
     disconnect(): Promise<void>;
     /**
-     * Set the HUAJUN display's nutrition counters (calories, protein, fat, carbohydrate). The values
-     * stay on the display until the connection ends, so call it again after reconnecting and to
-     * update them. Values are rounded to 0.1.
+     * Show nutrition values on the scale's display. The same call works for every scale:
      *
-     * The scale ignores nutrition sent too soon after connecting, so until 3 s after `connect()`
-     * resolved, the write waits and the promise resolves once it's sent. Writes go out in call order.
+     * - HUAJUN sets its four nutrition counters, which keep the values until the connection ends; call
+     *   it again after reconnecting and to update them. The scale ignores writes in the first moments
+     *   after connecting, so until 3 s after `connect()` resolved, the write waits.
+     * - alpha cycles calories, protein, fat and carbohydrate twice and returns to the weight, so call it
+     *   again for each item, typically on its first stable reading (as the vendor app does).
+     * - On a scale that can't show nutrition ({@link NUTRITION_SUPPORT}) the request is ignored.
      *
-     * Throws if not connected (also when the connection ends while waiting; nothing is written then),
-     * if the transport has no `write`, if a value is out of range (`RangeError`, see
-     * {@link encodeNutrition}), or unless the scale is known to be HUAJUN: with `device: 'auto'`,
-     * wait for the first reading (or button press), or pass `device: 'huajun'`.
+     * With `device: 'auto'` the scale is identified by its first frame (reading or button press); a
+     * call made before that waits for it. Writes go out in call order.
+     *
+     * Resolves `true` once written, or `false` if the scale ignores nutrition. Throws if not connected
+     * (also when the connection ends while waiting; nothing is written then), if the transport has no
+     * `write`, or if a value is out of range (`RangeError`, see {@link encodeNutrition}).
      */
-    setNutrition(nutrition: Nutrition): Promise<void>;
+    setNutrition(nutrition: Nutrition): Promise<boolean>;
     /** Call `cb` for every valid reading. Returns an unsubscribe function. A throwing callback is logged and doesn't affect others. */
     onReading(cb: (reading: Reading) => void): () => void;
     /**

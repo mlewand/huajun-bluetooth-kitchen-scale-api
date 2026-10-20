@@ -34,7 +34,7 @@ export class NobleTransport {
         c.on('data', (data) => onData(new Uint8Array(data)));
         await c.subscribeAsync();
     }
-    /** Writes without response where the characteristic allows it (HUAJUN's `FFB1` does). */
+    /** Writes without response where the characteristic allows it (HUAJUN's `FFB1`), otherwise with response (alpha's `FFB1`). */
     async write(characteristic, data) {
         const c = await this.#find(characteristic);
         await c.writeAsync(Buffer.from(data), c.properties.includes('writeWithoutResponse'));

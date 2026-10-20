@@ -37,7 +37,11 @@ export declare class CapacitorTransport implements ScaleTransport {
     connect(): Promise<void>;
     disconnect(): Promise<void>;
     subscribe(characteristic: string, onData: (data: Uint8Array) => void): Promise<void>;
-    /** Writes without response (HUAJUN's `FFB1` allows it). */
+    /**
+     * Writes without response where the characteristic supports it (HUAJUN's `FFB1`), otherwise with
+     * response (alpha's `FFB1` supports only that). If the characteristic's properties can't be read,
+     * it writes without response.
+     */
     write(characteristic: string, data: Uint8Array): Promise<void>;
     onDisconnect(cb: () => void): void;
 }

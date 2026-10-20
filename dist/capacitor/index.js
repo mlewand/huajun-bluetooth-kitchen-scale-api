@@ -9,6 +9,8 @@ export class CapacitorTransport {
     options;
     #deviceId;
     #onDisconnect;
+    /** Properties of the service's characteristics, read on the first write of each connection. */
+    #properties;
     constructor(options = {}) {
         this.options = options;
     }
@@ -23,6 +25,7 @@ export class CapacitorTransport {
     async connect() {
         // Android 12+: the app must declare BLUETOOTH_SCAN with neverForLocation (see README).
         await BleClient.initialize({ androidNeverForLocation: true });
+        this.#properties = undefined;
         const known = this.options.deviceId;
         if (known === undefined) {
             this.#deviceId = await this.#pick();
@@ -59,9 +62,28 @@ export class CapacitorTransport {
     async subscribe(characteristic, onData) {
         await BleClient.startNotifications(this.#deviceId, SERVICE_UUID, characteristic, (value) => onData(new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice()));
     }
-    /** Writes without response (HUAJUN's `FFB1` allows it). */
+    /**
+     * Writes without response where the characteristic supports it (HUAJUN's `FFB1`), otherwise with
+     * response (alpha's `FFB1` supports only that). If the characteristic's properties can't be read,
+     * it writes without response.
+     */
     async write(characteristic, data) {
-        await BleClient.writeWithoutResponse(this.#deviceId, SERVICE_UUID, characteristic, new DataView(data.buffer, data.byteOffset, data.byteLength));
+        const value = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const properties = (await this.#readProperties()).get(characteristic.toLowerCase());
+        if (properties && !properties.writeWithoutResponse && properties.write) {
+            await BleClient.write(this.#deviceId, SERVICE_UUID, characteristic, value);
+        }
+        else {
+            await BleClient.writeWithoutResponse(this.#deviceId, SERVICE_UUID, characteristic, value);
+        }
+    }
+    #readProperties() {
+        this.#properties ??= BleClient.getServices(this.#deviceId)
+            .then((services) => new Map(services
+            .filter((s) => s.uuid.toLowerCase() === SERVICE_UUID)
+            .flatMap((s) => s.characteristics.map((c) => [c.uuid.toLowerCase(), c.properties]))))
+            .catch(() => new Map());
+        return this.#properties;
     }
     onDisconnect(cb) {
         this.#onDisconnect = cb;

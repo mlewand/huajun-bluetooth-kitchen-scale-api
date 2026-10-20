@@ -11,8 +11,8 @@ export interface ScaleTransport {
     onDisconnect(cb: () => void): void;
     /**
      * Optional. Write `data` to `characteristic` (a full lowercase 128-bit UUID), without response
-     * where the characteristic supports it. Only needed for `Scale.setNutrition`, which throws if the
-     * transport doesn't implement it.
+     * where the characteristic supports it and with response otherwise (alpha's `FFB1` allows only
+     * that). Only needed for `Scale.setNutrition`, which throws if the transport doesn't implement it.
      */
     write?(characteristic: string, data: Uint8Array): Promise<void>;
 }
