@@ -1,4 +1,4 @@
-import { DEFAULT_RESOLUTION, DEVICE_RESOLUTION, encodeNutrition, parseButton, parseFrame, WEIGHT_CHARACTERISTIC, WRITE_CHARACTERISTIC, type Button, type DeviceKind, type Nutrition, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
+import { checkNutrition, DEFAULT_RESOLUTION, DEVICE_RESOLUTION, encodeNutrition, parseButton, parseFrame, WEIGHT_CHARACTERISTIC, WRITE_CHARACTERISTIC, type Button, type DeviceKind, type Nutrition, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
 import type { ScaleTransport } from './transport.js';
 
 /** One decoded weight notification. Fields that aren't decoded are absent, never guessed. */
@@ -106,10 +106,11 @@ export function toReading(frame: ParsedFrame, times: ReceiveTimes, resolution: R
 }
 
 /**
- * How long after `connect()` the HUAJUN scale needs before it accepts nutrition. Writes 0.2 s and
- * 0.7 s after subscribing were ignored, one at 2.7 s was shown; the vendor app waits about 3 s.
+ * How long after `connect()` each scale needs before it shows nutrition. HUAJUN ignored writes 0.2 s
+ * and 0.7 s after subscribing and showed one at 2.7 s; its vendor app waits about 3 s. alpha showed
+ * a write 1.3 s after connecting, right after its first weight frame.
  */
-const NUTRITION_DELAY_MS = 3000;
+const NUTRITION_DELAY_MS: Record<DeviceKind, number> = { huajun: 3000, alpha: 0 };
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -119,7 +120,7 @@ const safely = (fn: () => void) => {
 
 /**
  * Live weight readings from the scale over any {@link ScaleTransport}.
- * It subscribes to weight notifications. The only write is {@link Scale.setNutrition}, on HUAJUN.
+ * It subscribes to weight notifications. The only writes are {@link Scale.setNutrition}'s.
  * One instance covers one connection; create a new `Scale` to reconnect.
  */
 export class Scale {
@@ -136,6 +137,8 @@ export class Scale {
   #writes: Promise<unknown> = Promise.resolve();
   /** The device of the first decoded frame, so writes go only to a scale known to accept them. */
   #device?: DeviceKind;
+  /** `setNutrition` calls waiting for the first frame to identify the scale. */
+  #identifyWaiters = new Set<{ resolve: (device: DeviceKind) => void; reject: (err: Error) => void }>();
 
   constructor(private transport: ScaleTransport, private options: ScaleOptions = {}) {
     checkResolution(options.resolution ?? {});
@@ -163,38 +166,58 @@ export class Scale {
   }
 
   /**
-   * Set the HUAJUN display's nutrition counters (calories, protein, fat, carbohydrate). The values
-   * stay on the display until the connection ends, so call it again after reconnecting and to
-   * update them. Values are rounded to 0.1.
+   * Show nutrition values on the scale's display. The same call works for every scale:
    *
-   * The scale ignores nutrition sent too soon after connecting, so until 3 s after `connect()`
-   * resolved, the write waits and the promise resolves once it's sent. Writes go out in call order.
+   * - HUAJUN sets its four nutrition counters, which keep the values until the connection ends; call
+   *   it again after reconnecting and to update them. The scale ignores writes in the first moments
+   *   after connecting, so until 3 s after `connect()` resolved, the write waits.
+   * - alpha cycles calories, protein, fat and carbohydrate twice and returns to the weight, so call it
+   *   again for each item, typically on its first stable reading (as the vendor app does).
+   * - On a scale that can't show nutrition ({@link NUTRITION_SUPPORT}) the request is ignored.
    *
-   * Throws if not connected (also when the connection ends while waiting; nothing is written then),
-   * if the transport has no `write`, if a value is out of range (`RangeError`, see
-   * {@link encodeNutrition}), or unless the scale is known to be HUAJUN: with `device: 'auto'`,
-   * wait for the first reading (or button press), or pass `device: 'huajun'`.
+   * With `device: 'auto'` the scale is identified by its first frame (reading or button press); a
+   * call made before that waits for it. Writes go out in call order.
+   *
+   * Resolves `true` once written, or `false` if the scale ignores nutrition. Throws if not connected
+   * (also when the connection ends while waiting; nothing is written then), if the transport has no
+   * `write`, or if a value is out of range (`RangeError`, see {@link encodeNutrition}).
    */
-  async setNutrition(nutrition: Nutrition): Promise<void> {
+  async setNutrition(nutrition: Nutrition): Promise<boolean> {
     if (!this.#connected) throw new Error('Not connected');
     if (!this.transport.write) throw new Error('This transport cannot write');
-    const { device = 'auto' } = this.options;
-    const known = device === 'auto' ? this.#device : device;
-    if (known !== 'huajun') {
-      throw new Error(known === undefined
-        ? 'Scale not identified yet: wait for the first reading, or pass device: \'huajun\''
-        : `Writing nutrition is only supported on HUAJUN, not ${known}`);
-    }
-    const frame = encodeNutrition(nutrition, known);
+    checkNutrition(nutrition);
     const write = this.transport.write.bind(this.transport);
     const queued = this.#writes.then(async () => {
-      const wait = this.#connectedAt + NUTRITION_DELAY_MS - this.#monotonicNow();
+      const device = await this.#identified();
+      const frames = encodeNutrition(nutrition, device);
+      if (!frames.length) return false;
+      const wait = this.#connectedAt + NUTRITION_DELAY_MS[device] - this.#monotonicNow();
       if (wait > 0) await sleep(wait);
-      if (!this.#connected) throw new Error('Not connected');
-      await write(WRITE_CHARACTERISTIC, frame);
+      for (const frame of frames) {
+        if (!this.#connected) throw new Error('Not connected');
+        await write(WRITE_CHARACTERISTIC, frame);
+      }
+      return true;
     });
     this.#writes = queued.catch(() => {});
     return queued;
+  }
+
+  /** The scale's kind: the `device` option, or the first frame's device, waiting for it if needed. */
+  #identified(): Promise<DeviceKind> {
+    const { device = 'auto' } = this.options;
+    if (device !== 'auto') return Promise.resolve(device);
+    if (this.#device) return Promise.resolve(this.#device);
+    if (!this.#connected) return Promise.reject(new Error('Not connected'));
+    return new Promise((resolve, reject) => this.#identifyWaiters.add({ resolve, reject }));
+  }
+
+  /** Remember the first frame's device and release `setNutrition` calls waiting for it. */
+  #identify(device: DeviceKind): void {
+    if (this.#device) return;
+    this.#device = device;
+    this.#identifyWaiters.forEach((w) => w.resolve(device));
+    this.#identifyWaiters.clear();
   }
 
   /** Call `cb` for every valid reading. Returns an unsubscribe function. A throwing callback is logged and doesn't affect others. */
@@ -250,6 +273,8 @@ export class Scale {
     if (!this.#open) return;
     this.#open = false;
     this.#connected = false;
+    this.#identifyWaiters.forEach((w) => w.reject(new Error('Not connected')));
+    this.#identifyWaiters.clear();
     this.#closers.forEach((close) => close());
     this.#disconnectListeners.forEach((cb) => safely(cb));
   }
@@ -261,12 +286,12 @@ export class Scale {
       const button = result.rejection.reason === 'control-frame' ? parseButton(data, device) : undefined;
       if (!button) return this.options.onRejected?.(data, result.rejection);
       // Only HUAJUN reports buttons (parseButton).
-      this.#device ??= 'huajun';
+      this.#identify('huajun');
       const press: ButtonPress = { device: 'huajun', button, raw: data, ...this.#now() };
       for (const cb of this.#buttonListeners) safely(() => cb(press));
       return;
     }
-    this.#device ??= result.frame.device;
+    this.#identify(result.frame.device);
     const reading = toReading(result.frame, this.#now(), this.options.resolution);
     for (const cb of this.#listeners) safely(() => cb(reading));
   }

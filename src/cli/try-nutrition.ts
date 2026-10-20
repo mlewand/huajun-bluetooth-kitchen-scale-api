@@ -63,7 +63,7 @@ if (numbers.length !== FIELDS.length) fail(`--values needs ${FIELDS.length} numb
 const nutrition = Object.fromEntries(FIELDS.map((name, i) => [name, numbers[i]])) as unknown as Nutrition;
 let frame: Uint8Array;
 try {
-  frame = encodeNutrition(nutrition);
+  frame = encodeNutrition(nutrition, 'huajun')[0]!; // HUAJUN encodes a single frame
 } catch (err) {
   fail(`--values: ${err instanceof Error ? err.message : err}`);
 }

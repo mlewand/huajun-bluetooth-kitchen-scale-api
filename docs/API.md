@@ -6,7 +6,7 @@ Keep this file in sync with `src/` (enforced by `test/docs.test.ts`). For a quic
 
 | Import | Exports |
 |---|---|
-| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ButtonPress`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `parseButton`, `Button`, `encodeNutrition`, `Nutrition`, `Unit`, `DeviceKind`, `DEVICE_NAMES`, `Resolution`, `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC`, `WRITE_CHARACTERISTIC` |
+| `@mlewand/huajun-ble-scale` | `Scale`, `Reading`, `ButtonPress`, `ScaleOptions`, `toReading`, `ReceiveTimes`, `parseFrame`, `ParsedFrame`, `ParseResult`, `Rejection`, `parseButton`, `Button`, `encodeNutrition`, `Nutrition`, `NUTRITION_SUPPORT`, `Unit`, `DeviceKind`, `DEVICE_NAMES`, `Resolution`, `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `ScaleTransport`, `SERVICE_UUID`, `WEIGHT_CHARACTERISTIC`, `WRITE_CHARACTERISTIC` |
 | `@mlewand/huajun-ble-scale/node` | `NobleTransport`, `NobleTransportOptions` |
 | `@mlewand/huajun-ble-scale/capacitor` | `CapacitorTransport`, `CapacitorTransportOptions` |
 
@@ -20,7 +20,7 @@ Two scales are supported, identified by `DeviceKind`: `'huajun'` (advertised as 
 new Scale(transport: ScaleTransport, options?: ScaleOptions)
 ```
 
-One instance covers one connection. To reconnect, create a new `Scale`. The only thing ever written to the device is the nutrition frame of `setNutrition()`, and only to a HUAJUN scale.
+One instance covers one connection. To reconnect, create a new `Scale`. The only things ever written to the device are the nutrition frames of `setNutrition()`.
 
 | Member | Description |
 |---|---|
@@ -28,7 +28,7 @@ One instance covers one connection. To reconnect, create a new `Scale`. The only
 | `disconnect(): Promise<void>` | Disconnects. Ends pending iterators and fires `onDisconnect` callbacks. |
 | `onReading(cb): () => void` | Calls `cb(reading)` for every valid frame. Returns an unsubscribe function. A throwing callback is logged with `console.error` and doesn't affect other callbacks. |
 | `onButton(cb): () => void` | Calls `cb(press)` with a [`ButtonPress`](#buttonpress) for every button press the scale reports (HUAJUN `+Plate` and `Total`; alpha reports none). Returns an unsubscribe function. A throwing callback is logged with `console.error` and doesn't affect other callbacks. |
-| `setNutrition(nutrition): Promise<void>` | HUAJUN only. Sets the display's nutrition counters to a [`Nutrition`](#encodenutritionnutrition-nutrition-device-devicekind-uint8array) (calories, protein, fat, carbohydrate), rounded to 0.1. They stay on the display until the connection ends, so call it again after reconnecting, and to update them. The scale ignores nutrition sent too soon after connecting, so until 3 s after `connect()` resolved the write waits; the promise resolves once it's sent, and writes go out in call order. Rejects if not connected, if the transport has no `write`, with a `RangeError` for out-of-range values, and unless the scale is known to be HUAJUN: pass `device: 'huajun'`, or with `'auto'` wait for the first reading or button press. Nothing is written when it rejects, including when the connection ends during the wait. |
+| `setNutrition(nutrition): Promise<boolean>` | Shows a [`Nutrition`](#encodenutritionnutrition-nutrition-device-devicekind-uint8array) (calories, protein, fat, carbohydrate) on the scale's display; the same call for every scale. **HUAJUN** sets its four nutrition counters, which stay until the connection ends, so call it again after reconnecting and to update them; it ignores nutrition sent too soon after connecting, so until 3 s after `connect()` resolved the write waits. **alpha** cycles the four values twice and returns to the weight, so call it for each item, typically on its first stable reading (as the vendor app does); it needs no wait. A scale that can't show nutrition (`NUTRITION_SUPPORT`) ignores the request. With `device: 'auto'` a call made before the first reading or button press waits for it to identify the scale. Writes go out in call order. Resolves `true` once written, `false` if the scale ignores nutrition. Rejects if not connected, if the transport has no `write`, and with a `RangeError` for out-of-range values. Nothing is written when it rejects, including when the connection ends while waiting. |
 | `onDisconnect(cb): () => void` | Fires once when the connection ends: device drop, `disconnect()`, or failed `connect()`. Returns an unsubscribe function. |
 | `readings(): AsyncIterableIterator<Reading>` | Listening starts when it is called, so call it before `connect()`. The iterator ends when the connection ends; breaking out of a `for await` loop stops listening. Readings are queued without a limit, so consume them. |
 
@@ -111,9 +111,10 @@ Pure decoder for one notification. Returns `{ ok: true, frame: ParsedFrame }` or
 
 - `{ reason: 'bad-length', length }`: not 8 bytes (HUAJUN) or 20 bytes (alpha).
 - `{ reason: 'bad-header', header }`: byte 0 isn't `0xAC`.
-- `{ reason: 'unknown-frame-type', type }`: byte 1 isn't the frame type, `0x05` for HUAJUN or `0x41` for alpha.
+- `{ reason: 'unknown-frame-type', type }`: byte 1 isn't the frame type, `0x05` for HUAJUN or the `0x41` device byte for alpha.
 - `{ reason: 'control-frame', type }` (HUAJUN): byte 2 is `0xFE`, so the frame is a control frame rather than a weight. `type` is byte 3. Button presses are control frames: `parseButton` decodes them, and `Scale` delivers them to `onButton` instead of `onRejected`. Control frames that aren't a known button still reach `onRejected`.
 - `{ reason: 'bad-checksum', expected, actual }` (alpha): the low byte of the sum of bytes 2-18 doesn't equal byte 19.
+- `{ reason: 'not-weight-frame', type }` (alpha): a valid frame whose type in byte 18 isn't `0xA6` (weight), for example `0xA0` device info. `type` is byte 18.
 
 HUAJUN frames get no checksum validation because byte 7 has no known formula.
 
@@ -127,13 +128,14 @@ Pure decoder for button presses, the counterpart of `parseFrame` (which rejects 
 
 HUAJUN button frames are `AC 05 FE 1E xx 00 00 ??`: `xx` is `03` for `+Plate` and `04` for `Total`. Other codes, and non-zero bytes 5-6, were never captured, so they give `undefined`. Byte 7 isn't checked.
 
-## `encodeNutrition(nutrition: Nutrition, device?: DeviceKind): Uint8Array`
+## `encodeNutrition(nutrition: Nutrition, device?: DeviceKind): Uint8Array[]`
 
-Pure encoder for the frame `setNutrition` writes to `WRITE_CHARACTERISTIC`, for use with your own BLE layer. `device` defaults to `'huajun'`, the only scale it supports; any other device throws.
+Pure encoder for the frames `setNutrition` writes to `WRITE_CHARACTERISTIC`, in order, for use with your own BLE layer. `device` defaults to `'huajun'`. Returns an empty list for a scale that can't show nutrition (`NUTRITION_SUPPORT`).
 
-`Nutrition` is `{ calories, protein, fat, carbohydrate }`, in kcal and grams, as the HUAJUN display shows them. All four are required. Each must be a finite number from 0 to 1677721.5, otherwise it throws a `RangeError`.
+`Nutrition` is `{ calories, protein, fat, carbohydrate }`, in kcal and grams. All four are required. Each must be a finite number from 0 to 1677721.5, otherwise it throws a `RangeError`.
 
-The frame is `AD 01` followed by six 24-bit big-endian values of round(value × 10), with no checksum: calories, protein, fat, carbohydrate, energy from fat, fiber. The vendor app fills the last two with fat × 9 and fiber. The HUAJUN display doesn't show them, so the library sends fat × 9 (capped at the maximum) and 0.
+- **HUAJUN**, one frame: `AD 01` followed by six 24-bit big-endian values of round(value × 10), with no checksum: calories, protein, fat, carbohydrate, energy from fat, fiber. The vendor app fills the last two with fat × 9 and fiber. The HUAJUN display doesn't show them, so the library sends fat × 9 (capped at the maximum) and 0.
+- **alpha**, two 20-byte frames of the nutrition command: `AC 41 <frame count> <index>`, 14 payload bytes, `D5` and the checksum (low byte of the sum of bytes 2-18). The payload is a food ID (u32, the library sends 1), a count (4), then per value a type byte and a 24-bit big-endian value, in the vendor app's order: type 0 calories in whole kcal (rounded), 1 fat, 2 carbohydrate and 5 protein, each round(g × 10). Confirmed on the display, and identical to what the vendor app sends.
 
 ## Constants
 
@@ -142,6 +144,7 @@ The frame is `AD 01` followed by six 24-bit big-endian values of round(value × 
 - `SERVICE_UUID`: `0000ffb0-0000-1000-8000-00805f9b34fb`
 - `WEIGHT_CHARACTERISTIC`: `0000ffb2-0000-1000-8000-00805f9b34fb`
 - `WRITE_CHARACTERISTIC`: `0000ffb1-0000-1000-8000-00805f9b34fb`, where `setNutrition` writes
+- `NUTRITION_SUPPORT`: which scales can show nutrition, `{ huajun: true, alpha: true }`; `setNutrition` ignores the request for a scale marked `false`
 
 ## `ScaleTransport`
 
@@ -160,7 +163,7 @@ interface ScaleTransport {
 - `connect()` resolves once connected and ready for `subscribe()`.
 - `subscribe()` receives a full lowercase 128-bit UUID, and must deliver each notification as its own `Uint8Array`.
 - `onDisconnect()` is called by `Scale` after `connect()` resolves. It must fire when the device drops and when `disconnect()` is called.
-- `write()` is optional and only used by `setNutrition`. It receives a full lowercase 128-bit UUID and should write without response where the characteristic supports it. Both built-in transports implement it.
+- `write()` is optional and only used by `setNutrition`. It receives a full lowercase 128-bit UUID and should write without response where the characteristic supports it, and with response otherwise (alpha's `FFB1` allows only that). Both built-in transports implement it and choose the write type from the characteristic's properties.
 
 ## `NobleTransport` (`/node`)
 

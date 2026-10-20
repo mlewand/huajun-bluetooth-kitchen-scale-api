@@ -95,6 +95,14 @@ describe('parseFrame (alpha)', () => {
     expect('value' in r.frame).toBe(false);
   });
 
+  it('rejects frames other than weights by their type in byte 18', () => {
+    // Device info (A0) from an HCI snoop log of the vendor app; it has a valid checksum and as a
+    // weight would read as a stable 3081 g. The scale sends it only after the vendor app's D0 command.
+    const deviceInfo = bytes('AC 41 01 00 2F 03 36 36 03 36 36 00 00 27 00 02 00 00 A0 D7');
+    expect(parseFrame(deviceInfo)).toEqual({ ok: false, rejection: { reason: 'not-weight-frame', type: 0xa0 } });
+    expect(parseFrame(deviceInfo, 'alpha')).toEqual({ ok: false, rejection: { reason: 'not-weight-frame', type: 0xa0 } });
+  });
+
   it('rejects a wrong checksum, frame type, header and length', () => {
     const good = bytes('AC 41 01 00 00 65 FE 00 00 00 00 00 00 00 00 00 00 00 A6 0A');
     expect(parseFrame(good).ok).toBe(true);

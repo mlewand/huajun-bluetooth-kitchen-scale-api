@@ -1,4 +1,4 @@
-import { BleClient } from '@capacitor-community/bluetooth-le';
+import { BleClient, type BleCharacteristicProperties } from '@capacitor-community/bluetooth-le';
 import { DEVICE_NAMES, SERVICE_UUID, type DeviceKind } from '../parse.js';
 import type { ScaleTransport } from '../transport.js';
 
@@ -30,6 +30,8 @@ export interface CapacitorTransportOptions {
 export class CapacitorTransport implements ScaleTransport {
   #deviceId?: string;
   #onDisconnect?: () => void;
+  /** Properties of the service's characteristics, read on the first write of each connection. */
+  #properties: Promise<Map<string, BleCharacteristicProperties>> | undefined;
 
   constructor(private options: CapacitorTransportOptions = {}) {}
 
@@ -45,6 +47,7 @@ export class CapacitorTransport implements ScaleTransport {
   async connect(): Promise<void> {
     // Android 12+: the app must declare BLUETOOTH_SCAN with neverForLocation (see README).
     await BleClient.initialize({ androidNeverForLocation: true });
+    this.#properties = undefined;
     const known = this.options.deviceId;
     if (known === undefined) {
       this.#deviceId = await this.#pick();
@@ -88,9 +91,28 @@ export class CapacitorTransport implements ScaleTransport {
     );
   }
 
-  /** Writes without response (HUAJUN's `FFB1` allows it). */
+  /**
+   * Writes without response where the characteristic supports it (HUAJUN's `FFB1`), otherwise with
+   * response (alpha's `FFB1` supports only that). If the characteristic's properties can't be read,
+   * it writes without response.
+   */
   async write(characteristic: string, data: Uint8Array): Promise<void> {
-    await BleClient.writeWithoutResponse(this.#deviceId!, SERVICE_UUID, characteristic, new DataView(data.buffer, data.byteOffset, data.byteLength));
+    const value = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const properties = (await this.#readProperties()).get(characteristic.toLowerCase());
+    if (properties && !properties.writeWithoutResponse && properties.write) {
+      await BleClient.write(this.#deviceId!, SERVICE_UUID, characteristic, value);
+    } else {
+      await BleClient.writeWithoutResponse(this.#deviceId!, SERVICE_UUID, characteristic, value);
+    }
+  }
+
+  #readProperties(): Promise<Map<string, BleCharacteristicProperties>> {
+    this.#properties ??= BleClient.getServices(this.#deviceId!)
+      .then((services) => new Map(services
+        .filter((s) => s.uuid.toLowerCase() === SERVICE_UUID)
+        .flatMap((s) => s.characteristics.map((c) => [c.uuid.toLowerCase(), c.properties] as const))))
+      .catch(() => new Map());
+    return this.#properties;
   }
 
   onDisconnect(cb: () => void): void {
