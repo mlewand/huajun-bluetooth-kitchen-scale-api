@@ -1,6 +1,6 @@
 # @mlewand/huajun-ble-scale
 
-TypeScript library that reads live weight from Bluetooth LE kitchen scales: HUAJUN (advertised as `NSCALE`, 5000 g / 0.1 g), Wozi (also advertised as `NSCALE`, 1 g) and the "alpha" scale (advertised as `MY_SCALE`, 5000 g / 1 g). Works in Node (macOS) and in Capacitor/Web Bluetooth. All of them use the same GATT service and characteristic, so by default (`device: 'auto'`) the library tells the protocols apart by frame length; pass `device: 'huajun'` or `device: 'alpha'` to `Scale` and the transport to pin one. Wozi uses the HUAJUN protocol and reports `device: 'huajun'`. It mostly reads: the one thing it writes is nutrition values (calories, protein, fat, carbohydrate) to the HUAJUN display's counters, and only when you call `setNutrition`.
+TypeScript library that reads live weight from Bluetooth LE kitchen scales: HUAJUN (advertised as `NSCALE`, 5000 g / 0.1 g), Wozi (advertised as `NSCALE` or `SCALE`, 1 g) and the "alpha" scale (advertised as `MY_SCALE`, 5000 g / 1 g). Works in Node (macOS) and in Capacitor/Web Bluetooth. All of them use the same GATT service and characteristic, so by default (`device: 'auto'`) the library tells the protocols apart by frame length; pass `device: 'huajun'` or `device: 'alpha'` to `Scale` and the transport to pin one. Wozi uses the HUAJUN protocol and reports `device: 'huajun'`. It mostly reads: the one thing it writes is nutrition values to the display, and only when you call `setNutrition`.
 
 **Unofficial.** This project is not affiliated with or endorsed by HUAJUN or any other scale maker. Brand names are trademarks of their owners and are used only to say which hardware the library works with.
 
@@ -37,7 +37,7 @@ await scale.connect();
 for await (const r of readings) console.log(r); // ends when the connection ends (or connect() fails)
 ```
 
-To show nutrition values on the display, the same call works on both scales:
+To show nutrition values on the display, the same call works on every scale:
 
 ```ts
 const scale = new Scale(new NobleTransport());
@@ -45,7 +45,17 @@ await scale.connect();
 await scale.setNutrition({ calories: 100, protein: 2, fat: 3, carbohydrate: 4 }); // kcal, g, g, g
 ```
 
-HUAJUN keeps the values on its four nutrition counters until the connection ends (the write waits until 3 s after `connect()`). alpha cycles them twice and returns to the weight, so send them for each item, typically on its first stable reading. With `device: 'auto'` a call made before the first reading waits for it to identify the scale. A scale that can't show nutrition ignores the request: `setNutrition` resolves `false` and writes nothing.
+Wozi displays have more counters, which you can fill with optional fields:
+
+```ts
+await scale.setNutrition({
+  calories: 100, protein: 2, fat: 3, carbohydrate: 4,
+  fiber: 5, sugar: 12, transFat: 15, saturatedFat: 16, // g
+  sodium: 11, cholesterol: 13, potassium: 14,          // mg
+});
+```
+
+HUAJUN keeps the values on its four nutrition counters until the connection ends (the write waits until 3 s after `connect()`, on Wozi too). If you give `sodium`, `sugar`, `cholesterol`, `potassium`, `transFat` or `saturatedFat`, a second frame follows 1 s later, and from then on a field you leave out goes back to 0. alpha cycles the first four twice and returns to the weight, so send them for each item, typically on its first stable reading. With `device: 'auto'` a call made before the first reading waits for it to identify the scale. A scale that can't show nutrition ignores the request: `setNutrition` resolves `false` and writes nothing.
 
 Full reference: [docs/API.md](docs/API.md). To support another scale, see [docs/NEW-DEVICE.md](docs/NEW-DEVICE.md).
 
@@ -68,7 +78,7 @@ On macOS the terminal app needs Bluetooth permission (System Settings > Privacy 
 
 Both scales: service `0000ffb0-…`, notifications on `FFB2`. Reading needs no writes.
 
-### HUAJUN and Wozi (`NSCALE`)
+### HUAJUN and Wozi (`NSCALE`, `SCALE`)
 
 8-byte frames. `FFB4` never sent data on HUAJUN. A notification arrives about every 225 ms, even when nothing changes.
 
@@ -88,7 +98,21 @@ Control frames are `AC 05 FE 1E xx 00 00 ??`: `xx` is `03` for the `+Plate` butt
 
 #### Writing nutrition (HUAJUN and Wozi)
 
-Written to `FFB1` without response, 20 bytes, no checksum: `AD 01`, then six 24-bit big-endian values of round(value × 10). Confirmed on the display (model ID 21): calories (kcal), protein, fat and carbohydrate (g), shown with one decimal and kept until the connection ends. The scale ignores the frame in the first moments after connecting (0.2 s and 0.7 s after subscribing: ignored; 2.7 s: shown), so the library waits until 3 s after connecting, about as long as the vendor app does. The last two values (energy from fat and fiber, as the vendor app sends them) aren't displayed. The layout comes from the vendor app; `npm run try-nutrition` is the experiment that confirmed it. The Wozi display shows the same four values from this frame; its other nutrition counters (fiber, sodium and so on) stay at 0 for now, see [TODO.md](TODO.md).
+Written to `FFB1` without response, 20 bytes, no checksum: `AD 01` or `AD 02`, then six 24-bit big-endian values of round(value × 10). All three scales report model ID 21, but their displays differ:
+
+| Frame, field | Value | HUAJUN | Wozi `NSCALE` | Wozi `SCALE` |
+|---|---|---|---|---|
+| `AD 01` 1-4 | Calories (kcal), protein, fat, carbohydrate (g) | shown | shown | shown |
+| `AD 01` 5 | Calories from fat (kcal); the library sends fat × 9, as the vendor app does | no counter | shown | shown |
+| `AD 01` 6 | Fiber (g) | no counter | shown | shown |
+| `AD 02` 1 | Sodium (mg) | not tried | shown | shown |
+| `AD 02` 2 | Sugar (g) | not tried | shown | no counter |
+| `AD 02` 3 | Cholesterol (mg) | not tried | shown | shown |
+| `AD 02` 4 | Potassium (mg) | not tried | shown | no counter |
+| `AD 02` 5 | Trans fat (g) | not tried | shown | no counter |
+| `AD 02` 6 | Saturated fat (g) | not tried | shown | no counter |
+
+Values are shown with one decimal, and HUAJUN keeps them until the connection ends. The library sends `AD 02` only if one of its fields is given, 1 s after `AD 01` as the vendor app does; nothing shorter was tried. The scale ignores the frame in the first moments after connecting (0.2 s and 0.7 s after subscribing: ignored; 2.7 s: shown), so the library waits until 3 s after connecting, about as long as the vendor app does. The layout comes from the vendor app; `npm run try-nutrition` is the experiment that confirmed it.
 
 ### alpha (`MY_SCALE`)
 

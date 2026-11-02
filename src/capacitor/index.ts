@@ -7,9 +7,10 @@ export interface CapacitorTransportOptions {
   /** Advertised name to look for. Overrides `device`. */
   name?: string;
   /**
-   * Which scale to look for, by its advertised name (`NSCALE` for `'huajun'`, `MY_SCALE` for
-   * `'alpha'`). `'auto'` (default) shows every nearby device, because the plugin can filter by
-   * only one name and neither scale is known to advertise its service.
+   * Which scale to look for, by its advertised name. `'alpha'` filters by `MY_SCALE`. `'huajun'` has
+   * two names (`NSCALE` and `SCALE`), and `'auto'` (default) has all of them. Those show every nearby
+   * device, because the plugin can filter by only one name and no scale is known to advertise its
+   * service. Pass `name` to filter by one of them.
    */
   device?: DeviceKind | 'auto';
   /** Show every nearby device even if `name` or `device` would filter (needed for Chrome, whose name filter does not match this scale). */
@@ -73,9 +74,9 @@ export class CapacitorTransport implements ScaleTransport {
 
   async #pick(): Promise<string> {
     const { name, device = 'auto', showAllDevices } = this.options;
-    const filter = name ?? (device === 'auto' ? undefined : DEVICE_NAMES[device]);
+    const names = name !== undefined ? [name] : device === 'auto' ? [] : DEVICE_NAMES[device];
     const picked = await BleClient.requestDevice({
-      ...(showAllDevices || filter === undefined ? {} : { name: filter }),
+      ...(showAllDevices || names.length !== 1 ? {} : { name: names[0]! }),
       optionalServices: [SERVICE_UUID], // required by Web Bluetooth to access the service
     });
     return picked.deviceId;

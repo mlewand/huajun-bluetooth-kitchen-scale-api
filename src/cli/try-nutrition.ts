@@ -1,23 +1,21 @@
 /**
- * Experiment (HUAJUN and Wozi, never shipped): query the scale's model ID and write nutrition
- * frames to its display counters, while logging everything the scale sends.
+ * Experiment (HUAJUN and Wozi, never shipped): query the scale's model ID, which the library never
+ * does, and write nutrition frames to its display counters, while logging everything the scale sends.
  *
  *   npm run try-nutrition [-- --values 100,2,3,4] [--fiber 5] [--extra 11,12,13,14,15,16] [--skip-extra]
  *                         [--gap 1] [--page 2] [--skip-query] [--wait 2] [--resend 6] [--duration 40]
  *                         [--label x] [--out captures/wozi] [--dry-run]
  *
- * --values  Calories (kcal), protein, fat and carbohydrate (g): `AD 01` fields 1-4 (`encodeNutrition`).
- *           Every value is distinct by default so each display counter shows which field it reads.
- * --fiber   `AD 01` field 6, which the library sends as 0.
- * --extra   Sodium, sugar, cholesterol, potassium, trans fat and saturated fat: the six fields of
- *           `AD 02`, which the library never sends. The layout comes from the decompiled vendor app
- *           and hasn't been confirmed on a display.
+ * --values  Calories (kcal), protein, fat and carbohydrate (g): `AD 01` fields 1-4. Every value is
+ *           distinct by default so each display counter shows which field it reads.
+ * --fiber   `AD 01` field 6.
+ * --extra   Sodium, sugar, cholesterol, potassium, trans fat and saturated fat: the six fields of `AD 02`.
  * --skip-extra  Send `AD 01` only.
- * --gap     Seconds between `AD 01` and `AD 02`. Default 1, as the vendor app does. 0 sends them
- *           back to back.
+ * --gap     Seconds between `AD 01` and `AD 02`. Default 1, as the vendor app and the library do.
+ *           0 sends them back to back, which hasn't been tried on a display.
  * --page    After the nutrition frames, also send the vendor app's page command
  *           `AC 05 FE 20 <page> 00 CC <sum>` (2 weighing, 1 totals). Not sent by default.
- * --skip-query  Don't send the model ID query first (the library never sends it).
+ * --skip-query  Don't send the model ID query first.
  * --wait    Seconds between the first weight frames (and the query) and the nutrition write.
  *           Default 2; the library writes as soon as it's asked, which can be right after connecting.
  * --resend  Resend the nutrition frames every N seconds (the vendor app resends every 6 s).
@@ -34,12 +32,11 @@ import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
 import type { Characteristic } from '@stoprocent/noble';
 import { DEVICE_NAMES, encodeNutrition, parseButton, parseFrame, type Nutrition } from '../parse.js';
-import { MAX_NUTRITION_VALUE } from '../protocols/huajun.js';
 import { findByName, waitForPoweredOn } from '../node/discovery.js';
 
 const { values: args } = parseArgs({
   options: {
-    name: { type: 'string', default: DEVICE_NAMES.huajun },
+    name: { type: 'string' },
     values: { type: 'string', default: '100,2,3,4' },
     fiber: { type: 'string', default: '5' },
     extra: { type: 'string', default: '11,12,13,14,15,16' },
@@ -58,7 +55,7 @@ const { values: args } = parseArgs({
 });
 
 const FIELDS = ['calories', 'protein', 'fat', 'carbohydrate'] as const;
-const EXTRA_FIELDS = ['sodium', 'sugar', 'cholesterol', 'potassium', 'trans fat', 'saturated fat'] as const;
+const EXTRA_FIELDS = ['sodium', 'sugar', 'cholesterol', 'potassium', 'transFat', 'saturatedFat'] as const;
 const DID_QUERY = [0xac, 0x05, 0xfe, 0x1d, 0x00, 0x00, 0xcc, 0xe7];
 /** Model IDs the vendor app knows, from its class names and nutrition lists. */
 const MODELS: Record<number, string> = {
@@ -72,11 +69,6 @@ const log = (msg: string) => console.error(msg);
 const fail = (msg: string): never => { log(`Error: ${msg}`); process.exit(1); };
 const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-/** round(value × 10) as the 24-bit big-endian field of a nutrition frame. */
-const field = (value: number) => {
-  const q = Math.round(value * 10);
-  return [(q >> 16) & 0xff, (q >> 8) & 0xff, q & 0xff];
-};
 /** `ffb1`, `0000ffb1-…` or `0000ffb100001000…` → `ffb1`. */
 const shortUuid = (uuid: string) => {
   const hex = uuid.toLowerCase().replaceAll('-', '');
@@ -85,33 +77,33 @@ const shortUuid = (uuid: string) => {
 
 const numbers = args.values.split(',').map(Number);
 if (numbers.length !== FIELDS.length) fail(`--values needs ${FIELDS.length} numbers: ${FIELDS.join(', ')}`);
-const nutrition = Object.fromEntries(FIELDS.map((name, i) => [name, numbers[i]])) as unknown as Nutrition;
-let frame: Uint8Array;
-try {
-  frame = encodeNutrition(nutrition, 'huajun')[0]!; // HUAJUN encodes a single frame
-} catch (err) {
-  fail(`--values: ${err instanceof Error ? err.message : err}`);
-}
 const fiber = Number(args.fiber);
 const extra = args.extra.split(',').map(Number);
 if (extra.length !== EXTRA_FIELDS.length) fail(`--extra needs ${EXTRA_FIELDS.length} numbers: ${EXTRA_FIELDS.join(', ')}`);
-if (![fiber, ...extra].every((v) => v >= 0 && v <= MAX_NUTRITION_VALUE)) fail(`--fiber and --extra need numbers from 0 to ${MAX_NUTRITION_VALUE}`);
-frame!.set(field(fiber), 17);
-const extraFrame = new Uint8Array(20);
-extraFrame.set([0xad, 0x02]);
-extra.forEach((v, i) => extraFrame.set(field(v), 2 + i * 3));
+const nutrition = {
+  ...Object.fromEntries(FIELDS.map((name, i) => [name, numbers[i]])),
+  fiber,
+  ...(args['skip-extra'] ? {} : Object.fromEntries(EXTRA_FIELDS.map((name, i) => [name, extra[i]]))),
+} as unknown as Nutrition;
+let frames: Uint8Array[] = [];
+try {
+  frames = encodeNutrition(nutrition, 'huajun');
+} catch (err) {
+  fail(err instanceof Error ? err.message : String(err));
+}
+const frame = frames[0]!;
+const extraFrame = frames[1];
 const page = args.page === undefined ? undefined : Number(args.page);
 if (page !== undefined && !(Number.isInteger(page) && page >= 0 && page <= 0xff)) fail('--page needs a number from 0 to 255');
 const pageFrame = page === undefined ? undefined : Uint8Array.from([0xac, 0x05, 0xfe, 0x20, page, 0x00, 0xcc, (0xfe + 0x20 + page + 0xcc) & 0xff]);
 const gapMs = Number(args.gap) * 1000;
 if (!(gapMs >= 0)) fail('--gap needs a number of seconds');
-const skipExtra = args['skip-extra'];
 const label = [...FIELDS.map((name) => `${name} ${nutrition[name]}`), `fiber ${fiber}`].join(', ');
 const extraLabel = EXTRA_FIELDS.map((name, i) => `${name} ${extra[i]}`).join(', ');
 
 if (args['dry-run']) {
-  console.log(`${toHex(frame!)}  AD 01: ${label}`);
-  if (!skipExtra) console.log(`${toHex(extraFrame)}  AD 02: ${extraLabel}`);
+  console.log(`${toHex(frame)}  AD 01: ${label}`);
+  if (extraFrame) console.log(`${toHex(extraFrame)}  AD 02: ${extraLabel}`);
   if (pageFrame) console.log(`${toHex(pageFrame)}  page ${page}`);
   process.exit(0);
 }
@@ -124,8 +116,9 @@ if (!(resendMs >= 0) || !(durationMs > 0)) fail('--resend and --duration need nu
 
 async function main() {
   await waitForPoweredOn(10_000);
-  log(`Scanning for "${args.name}"...`);
-  const peripheral = await findByName([args.name], Number(args['scan-timeout']) * 1000);
+  const names = args.name !== undefined ? [args.name] : DEVICE_NAMES.huajun;
+  log(`Scanning for ${names.map((n) => `"${n}"`).join(' or ')}...`);
+  const peripheral = await findByName(names, Number(args['scan-timeout']) * 1000);
   log(`Found ${peripheral.advertisement.localName} (id ${peripheral.id}). Connecting...`);
   const { manufacturerData, serviceUuids } = peripheral.advertisement;
   log(`Advertisement: manufacturer data ${manufacturerData ? toHex(manufacturerData) : 'none'}; services ${serviceUuids?.join(', ') || 'none'}`);
@@ -206,7 +199,7 @@ async function main() {
 
   const sendNutrition = async () => {
     await send(frame, `AD 01: ${label}`);
-    if (!skipExtra) {
+    if (extraFrame) {
       await sleep(gapMs);
       if (stopped) return;
       await send(extraFrame, `AD 02: ${extraLabel}`);
@@ -229,7 +222,7 @@ async function main() {
 
   log('');
   log(args['skip-query'] ? 'Model ID query skipped.' : did === undefined ? 'No model ID reply.' : `Model ID (DID): ${did} - ${MODELS[did] ?? 'not in the vendor app lists'}`);
-  log(`Sent: ${label}${skipExtra ? '' : `, ${extraLabel}`}.`);
+  log(`Sent: ${label}${extraFrame ? `, ${extraLabel}` : ''}.`);
   log('Please note which display counter showed which number, and whether they stayed after a few seconds.');
   if (args.label) log(`Session saved to ${join(args.out!, `${args.label}.jsonl`)}`);
 }

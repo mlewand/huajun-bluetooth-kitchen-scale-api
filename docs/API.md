@@ -12,7 +12,7 @@ Keep this file in sync with `src/` (enforced by `test/docs.test.ts`). For a quic
 
 The core has no dependencies and uses only `Uint8Array`/`DataView`.
 
-Two scales are supported, identified by `DeviceKind`: `'huajun'` (advertised as `NSCALE`, 8-byte frames) and `'alpha'` (advertised as `MY_SCALE`, 20-byte frames). They share the service and characteristic UUIDs, so the frames are told apart by length.
+Two protocols are supported, identified by `DeviceKind`: `'huajun'` (8-byte frames; the HUAJUN scale and the Wozi scale advertised as `NSCALE`, and the Wozi scale advertised as `SCALE`) and `'alpha'` (advertised as `MY_SCALE`, 20-byte frames). They share the service and characteristic UUIDs, so the frames are told apart by length.
 
 ## `Scale`
 
@@ -28,7 +28,7 @@ One instance covers one connection. To reconnect, create a new `Scale`. The only
 | `disconnect(): Promise<void>` | Disconnects. Ends pending iterators and fires `onDisconnect` callbacks. |
 | `onReading(cb): () => void` | Calls `cb(reading)` for every valid frame. Returns an unsubscribe function. A throwing callback is logged with `console.error` and doesn't affect other callbacks. |
 | `onButton(cb): () => void` | Calls `cb(press)` with a [`ButtonPress`](#buttonpress) for every button press the scale reports (HUAJUN `+Plate` and `Total`; alpha reports none). Returns an unsubscribe function. A throwing callback is logged with `console.error` and doesn't affect other callbacks. |
-| `setNutrition(nutrition): Promise<boolean>` | Shows a [`Nutrition`](#encodenutritionnutrition-nutrition-device-devicekind-uint8array) (calories, protein, fat, carbohydrate) on the scale's display; the same call for every scale. **HUAJUN** sets its four nutrition counters, which stay until the connection ends, so call it again after reconnecting and to update them; it ignores nutrition sent too soon after connecting, so until 3 s after `connect()` resolved the write waits. **alpha** cycles the four values twice and returns to the weight, so call it for each item, typically on its first stable reading (as the vendor app does); it needs no wait. A scale that can't show nutrition (`NUTRITION_SUPPORT`) ignores the request. With `device: 'auto'` a call made before the first reading or button press waits for it to identify the scale. Writes go out in call order. Resolves `true` once written, `false` if the scale ignores nutrition. Rejects if not connected, if the transport has no `write`, and with a `RangeError` for out-of-range values. Nothing is written when it rejects, including when the connection ends while waiting. |
+| `setNutrition(nutrition): Promise<boolean>` | Shows a [`Nutrition`](#encodenutritionnutrition-nutrition-device-devicekind-uint8array) on the scale's display; the same call for every scale. **HUAJUN** and **Wozi** set the display's nutrition counters, so call it again after reconnecting and to update them. HUAJUN keeps the values until the connection ends and ignores nutrition sent too soon after connecting, so on both, until 3 s after `connect()` resolved the write waits. If `sodium`, `sugar`, `cholesterol`, `potassium`, `transFat` or `saturatedFat` is given, a second frame goes out 1 s after the first and the call resolves after it; once one was given, later calls on that connection write that frame too, so a field left out goes back to 0 instead of keeping the previous value. **alpha** cycles calories, protein, fat and carbohydrate twice and returns to the weight, so call it for each item, typically on its first stable reading (as the vendor app does); it needs no wait. A scale that can't show nutrition (`NUTRITION_SUPPORT`) ignores the request. With `device: 'auto'` a call made before the first reading or button press waits for it to identify the scale. Writes go out in call order. Resolves `true` once written, `false` if the scale ignores nutrition. Rejects if not connected, if the transport has no `write`, and with a `RangeError` for out-of-range values. Nothing more is written when it rejects, including when the connection ends while waiting. |
 | `onDisconnect(cb): () => void` | Fires once when the connection ends: device drop, `disconnect()`, or failed `connect()`. Returns an unsubscribe function. |
 | `readings(): AsyncIterableIterator<Reading>` | Listening starts when it is called, so call it before `connect()`. The iterator ends when the connection ends; breaking out of a `for await` loop stops listening. Readings are queued without a limit, so consume them. |
 
@@ -134,14 +134,14 @@ HUAJUN button frames are `AC 05 FE 1E xx 00 00 ??`: `xx` is `03` for `+Plate` an
 
 Pure encoder for the frames `setNutrition` writes to `WRITE_CHARACTERISTIC`, in order, for use with your own BLE layer. `device` defaults to `'huajun'`. Returns an empty list for a scale that can't show nutrition (`NUTRITION_SUPPORT`).
 
-`Nutrition` is `{ calories, protein, fat, carbohydrate }`, in kcal and grams. All four are required. Each must be a finite number from 0 to 1677721.5, otherwise it throws a `RangeError`.
+`Nutrition` has the required `calories` (kcal), `protein`, `fat` and `carbohydrate` (g), and the optional `fiber`, `sugar`, `transFat`, `saturatedFat` (g), `sodium`, `cholesterol` and `potassium` (mg). Each given value must be a finite number from 0 to 1677721.5, otherwise it throws a `RangeError`. What the display does with each field is listed in the [README](../README.md#writing-nutrition-huajun-and-wozi): the Wozi scale advertised as `NSCALE` shows them all, the one advertised as `SCALE` has no counters for sugar, potassium, trans fat and saturated fat, HUAJUN has none for any of the optional fields, and alpha ignores them.
 
-- **HUAJUN and Wozi**, one frame: `AD 01` followed by six 24-bit big-endian values of round(value × 10), with no checksum: calories, protein, fat, carbohydrate, energy from fat, fiber. The vendor app fills the last two with fat × 9 and fiber. The HUAJUN display doesn't show them, so the library sends fat × 9 (capped at the maximum) and 0.
+- **HUAJUN and Wozi**, one or two frames of `AD <group>` followed by six 24-bit big-endian values of round(value × 10), with no checksum. `AD 01`: calories, protein, fat, carbohydrate, energy from fat (fat × 9, capped at the maximum, as the vendor app sends it), fiber (0 if not given). `AD 02`, only if at least one of its fields is given: sodium, sugar, cholesterol, potassium, trans fat, saturated fat (0 for those not given). If you write them yourself, leave 1 s between the two, the only spacing confirmed. `AD 02` hasn't been tried on HUAJUN, so leave its fields out there.
 - **alpha**, two 20-byte frames of the nutrition command: `AC 41 <frame count> <index>`, 14 payload bytes, `D5` and the checksum (low byte of the sum of bytes 2-18). The payload is a food ID (u32, the library sends 1), a count (4), then per value a type byte and a 24-bit big-endian value, in the vendor app's order: type 0 calories in whole kcal (rounded), 1 fat, 2 carbohydrate and 5 protein, each round(g × 10). Confirmed on the display, and identical to what the vendor app sends.
 
 ## Constants
 
-- `DEVICE_NAMES`: advertised name per device, `{ huajun: 'NSCALE', alpha: 'MY_SCALE' }`. Wozi scales also advertise `NSCALE`, so with several powered on, a transport scanning by name connects to the first one it finds
+- `DEVICE_NAMES`: advertised names per device, as lists, `{ huajun: ['NSCALE', 'SCALE'], alpha: ['MY_SCALE'] }`. Names aren't unique: HUAJUN and a Wozi scale share `NSCALE`, and any other device called `SCALE` matches too, so with several powered on, a transport scanning by name connects to the first one it finds
 - `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `Resolution`: the display resolution per device and unit that `Reading.value` is rounded to; see [Resolution](#resolution)
 - `SERVICE_UUID`: `0000ffb0-0000-1000-8000-00805f9b34fb`
 - `WEIGHT_CHARACTERISTIC`: `0000ffb2-0000-1000-8000-00805f9b34fb`
@@ -171,7 +171,7 @@ interface ScaleTransport {
 
 Uses `@stoprocent/noble` (optional peer dependency). Scans by advertised name, then connects.
 
-`NobleTransportOptions`: `name` (advertised name to scan for; wins over `device`), `device` (`DeviceKind | 'auto'`; an explicit device scans for that scale's name from `DEVICE_NAMES`, `'auto'`, the default, takes the first scale found under either name), `scanTimeoutMs` (default 20000). Errors are thrown from `connect()` with readable messages: Bluetooth off, no adapter, scale not found. On macOS the terminal app needs Bluetooth permission (System Settings > Privacy & Security > Bluetooth), otherwise `connect()` rejects with an `unauthorized` message.
+`NobleTransportOptions`: `name` (advertised name to scan for; wins over `device`), `device` (`DeviceKind | 'auto'`; an explicit device scans for that scale's names from `DEVICE_NAMES`, `'auto'`, the default, takes the first scale found under any of them), `scanTimeoutMs` (default 20000). Errors are thrown from `connect()` with readable messages: Bluetooth off, no adapter, scale not found. On macOS the terminal app needs Bluetooth permission (System Settings > Privacy & Security > Bluetooth), otherwise `connect()` rejects with an `unauthorized` message.
 
 ## `CapacitorTransport` (`/capacitor`)
 
@@ -182,7 +182,7 @@ Uses `@capacitor-community/bluetooth-le` (optional peer dependency). `connect()`
 | Option | Description |
 |---|---|
 | `name` | Advertised name the picker filters by. Wins over `device`. |
-| `device` | `DeviceKind \| 'auto'`. An explicit device filters the picker by that scale's name from `DEVICE_NAMES` (`device: 'huajun'` is the old `NSCALE` filter). `'auto'`, the default, shows every nearby device, because the plugin filters by a single name and neither scale is known to advertise its service. |
+| `device` | `DeviceKind \| 'auto'`. `'alpha'` filters the picker by its name from `DEVICE_NAMES`. `'huajun'`, which has two names, and `'auto'`, the default, show every nearby device, because the plugin filters by a single name and no scale is known to advertise its service. Pass `name` to filter by one of them. |
 | `showAllDevices` | Show every nearby device in the picker. Chrome's Web Bluetooth name filter does not match this scale, so set it on the web. |
 | `deviceId` | Connect to this device without the picker. `name` and `showAllDevices` are then ignored. `undefined` shows the picker, so `{ deviceId: first.deviceId }` is fine before any device was picked. If the device can't be connected, `connect()` rejects with an error saying so, with the plugin's error as `cause`. It never falls back to the picker, which needs a user gesture. |
 

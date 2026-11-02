@@ -1,4 +1,4 @@
-import { checkNutrition, DEFAULT_RESOLUTION, DEVICE_RESOLUTION, encodeNutrition, parseButton, parseFrame, WEIGHT_CHARACTERISTIC, WRITE_CHARACTERISTIC, type Button, type DeviceKind, type Nutrition, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
+import { checkNutrition, DEFAULT_RESOLUTION, DEVICE_RESOLUTION, encodeNutrition, hasAd02Field, parseButton, parseFrame, WEIGHT_CHARACTERISTIC, WRITE_CHARACTERISTIC, type Button, type DeviceKind, type Nutrition, type ParsedFrame, type Rejection, type Resolution, type Unit } from './parse.js';
 import type { ScaleTransport } from './transport.js';
 
 /** One decoded weight notification. Fields that aren't decoded are absent, never guessed. */
@@ -112,6 +112,12 @@ export function toReading(frame: ParsedFrame, times: ReceiveTimes, resolution: R
  */
 const NUTRITION_DELAY_MS: Record<DeviceKind, number> = { huajun: 3000, alpha: 0 };
 
+/**
+ * Pause between the frames of one nutrition write. The Wozi displays showed `AD 02` written 1 s after
+ * `AD 01`, the vendor app's spacing, and nothing shorter was tried. alpha takes its frames back to back.
+ */
+const NUTRITION_FRAME_GAP_MS: Record<DeviceKind, number> = { huajun: 1000, alpha: 0 };
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const safely = (fn: () => void) => {
@@ -135,6 +141,8 @@ export class Scale {
   #connectedAt = 0;
   /** Queue that keeps nutrition writes in call order. */
   #writes: Promise<unknown> = Promise.resolve();
+  /** Set once a nutrition write has given an `AD 02` field, whose counters now hold a value. */
+  #ad02Written = false;
   /** The device of the first decoded frame, so writes go only to a scale known to accept them. */
   #device?: DeviceKind;
   /** `setNutrition` calls waiting for the first frame to identify the scale. */
@@ -168,9 +176,13 @@ export class Scale {
   /**
    * Show nutrition values on the scale's display. The same call works for every scale:
    *
-   * - HUAJUN sets its four nutrition counters, which keep the values until the connection ends; call
-   *   it again after reconnecting and to update them. The scale ignores writes in the first moments
-   *   after connecting, so until 3 s after `connect()` resolved, the write waits.
+   * - HUAJUN and Wozi set the display's nutrition counters; call it again after reconnecting and to
+   *   update them. HUAJUN keeps the values until the connection ends and ignores writes in the first
+   *   moments after connecting, so on both, until 3 s after `connect()` resolved, the write waits.
+   *   `sodium`, `sugar`, `cholesterol`, `potassium`, `transFat` and `saturatedFat` are in a second
+   *   frame, written 1 s after the first and only if one of them is given. Once one was given, later
+   *   calls on this connection write that frame too, so a field left out goes back to 0 rather than
+   *   keeping the previous value. See {@link Nutrition} for what each display shows.
    * - alpha cycles calories, protein, fat and carbohydrate twice and returns to the weight, so call it
    *   again for each item, typically on its first stable reading (as the vendor app does).
    * - On a scale that can't show nutrition ({@link NUTRITION_SUPPORT}) the request is ignored.
@@ -179,8 +191,8 @@ export class Scale {
    * call made before that waits for it. Writes go out in call order.
    *
    * Resolves `true` once written, or `false` if the scale ignores nutrition. Throws if not connected
-   * (also when the connection ends while waiting; nothing is written then), if the transport has no
-   * `write`, or if a value is out of range (`RangeError`, see {@link encodeNutrition}).
+   * (also when the connection ends while waiting; nothing more is written then), if the transport
+   * has no `write`, or if a value is out of range (`RangeError`, see {@link encodeNutrition}).
    */
   async setNutrition(nutrition: Nutrition): Promise<boolean> {
     if (!this.#connected) throw new Error('Not connected');
@@ -189,11 +201,14 @@ export class Scale {
     const write = this.transport.write.bind(this.transport);
     const queued = this.#writes.then(async () => {
       const device = await this.#identified();
-      const frames = encodeNutrition(nutrition, device);
+      // The counters keep their values, so a call that leaves these fields out must still overwrite them.
+      const frames = encodeNutrition(this.#ad02Written ? { ...nutrition, sodium: nutrition.sodium ?? 0 } : nutrition, device);
       if (!frames.length) return false;
+      this.#ad02Written ||= hasAd02Field(nutrition);
       const wait = this.#connectedAt + NUTRITION_DELAY_MS[device] - this.#monotonicNow();
       if (wait > 0) await sleep(wait);
-      for (const frame of frames) {
+      for (const [i, frame] of frames.entries()) {
+        if (i > 0 && NUTRITION_FRAME_GAP_MS[device] > 0) await sleep(NUTRITION_FRAME_GAP_MS[device]);
         if (!this.#connected) throw new Error('Not connected');
         await write(WRITE_CHARACTERISTIC, frame);
       }

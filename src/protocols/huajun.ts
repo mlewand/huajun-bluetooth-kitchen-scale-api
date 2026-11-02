@@ -58,24 +58,35 @@ export function parseHuajunButton(bytes: Uint8Array): Button | undefined {
 /** Largest value a nutrition field can carry: 24 bits in tenths. */
 export const MAX_NUTRITION_VALUE = 0xffffff / 10;
 
-/**
- * Encode the `AD 01` frame that sets the HUAJUN display's nutrition counters: `AD 01`, then six
- * 24-bit big-endian values of round(value × 10), no checksum. The display shows the first four
- * (calories, protein, fat, carbohydrate); the vendor app also sends energy from fat (fat × 9) and
- * fiber, which this scale doesn't display, so they are fat × 9 (capped at the maximum) and 0 here.
- */
-export function encodeHuajunNutrition(n: Nutrition): Uint8Array {
-  const fields = ['calories', 'protein', 'fat', 'carbohydrate'] as const;
-  const values = fields.map((name) => {
-    const v = n[name];
-    if (!Number.isFinite(v) || v < 0 || v > MAX_NUTRITION_VALUE) throw new RangeError(`Nutrition ${name} must be from 0 to ${MAX_NUTRITION_VALUE}, got ${v}`);
-    return v;
-  });
+/** The fields of the `AD 02` frame, in frame order. */
+export const AD_02_FIELDS = ['sodium', 'sugar', 'cholesterol', 'potassium', 'transFat', 'saturatedFat'] as const;
+
+/** Whether `nutrition` gives a field of the `AD 02` frame, so that {@link encodeHuajunNutrition} includes it. */
+export function hasAd02Field(nutrition: Nutrition): boolean {
+  return AD_02_FIELDS.some((name) => nutrition[name] !== undefined);
+}
+
+/** One 20-byte nutrition frame: `AD <group>`, then six 24-bit big-endian values of round(value × 10), no checksum. */
+function nutritionFrame(group: number, values: number[]): Uint8Array {
   const frame = new Uint8Array(20);
-  frame.set([0xad, 0x01]);
-  [...values, Math.min(n.fat * 9, MAX_NUTRITION_VALUE), 0].forEach((v, i) => {
+  frame.set([0xad, group]);
+  values.forEach((v, i) => {
     const q = Math.round(v * 10);
     frame.set([(q >> 16) & 0xff, (q >> 8) & 0xff, q & 0xff], 2 + i * 3);
   });
   return frame;
+}
+
+/**
+ * Encode the frames that set the nutrition counters of a HUAJUN or Wozi display, in write order.
+ *
+ * `AD 01` holds calories, protein, fat, carbohydrate, energy from fat (fat × 9, capped at the maximum,
+ * as the vendor app sends it) and fiber (0 if not given). `AD 02` holds sodium, sugar, cholesterol,
+ * potassium, trans fat and saturated fat (0 for those not given), and is included only if at least
+ * one of them is given. Values must be in range; `encodeNutrition` checks that.
+ */
+export function encodeHuajunNutrition(n: Nutrition): Uint8Array[] {
+  const frames = [nutritionFrame(0x01, [n.calories, n.protein, n.fat, n.carbohydrate, Math.min(n.fat * 9, MAX_NUTRITION_VALUE), n.fiber ?? 0])];
+  if (hasAd02Field(n)) frames.push(nutritionFrame(0x02, AD_02_FIELDS.map((name) => n[name] ?? 0)));
+  return frames;
 }

@@ -56,18 +56,20 @@ describe('CapacitorTransport', () => {
     expect(transport.deviceId).toBeUndefined();
     await transport.connect();
     expect(ble.requestDevice).toHaveBeenCalledOnce();
-    // Both known names can't be expressed as one filter, so the default chooser is unfiltered.
+    // The known names can't be expressed as one filter, so the default chooser is unfiltered.
     expect(ble.requestDevice).toHaveBeenCalledWith(expect.not.objectContaining({ name: expect.anything() }));
     expect(ble.connect).toHaveBeenCalledWith('picked-id', expect.any(Function));
     expect(transport.deviceId).toBe('picked-id');
   });
 
-  it.each([
-    ['huajun', 'NSCALE'],
-    ['alpha', 'MY_SCALE'],
-  ] as const)('with device %s, the chooser filters by %s', async (device, name) => {
-    await new CapacitorTransport({ device }).connect();
-    expect(ble.requestDevice).toHaveBeenCalledWith(expect.objectContaining({ name }));
+  it('with device alpha, the chooser filters by its one name', async () => {
+    await new CapacitorTransport({ device: 'alpha' }).connect();
+    expect(ble.requestDevice).toHaveBeenCalledWith(expect.objectContaining({ name: 'MY_SCALE' }));
+  });
+
+  it('with device huajun, the chooser is unfiltered, since it has two names and the plugin filters by one', async () => {
+    await new CapacitorTransport({ device: 'huajun' }).connect();
+    expect(ble.requestDevice).toHaveBeenCalledWith(expect.not.objectContaining({ name: expect.anything() }));
   });
 
   it('an explicit name wins over device', async () => {

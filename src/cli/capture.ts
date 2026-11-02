@@ -1,5 +1,5 @@
 /**
- * Capture raw notifications from a supported BLE kitchen scale (NSCALE or MY_SCALE).
+ * Capture raw notifications from a supported BLE kitchen scale (NSCALE, SCALE or MY_SCALE).
  *
  * Connects by advertised name, subscribes to every notify/indicate
  * characteristic of service FFB0, records for a fixed time, then prints
@@ -26,7 +26,7 @@ const { values: args } = parseArgs({
   },
 });
 
-const names = args.name !== undefined ? [args.name] : Object.values(DEVICE_NAMES);
+const names = args.name !== undefined ? [args.name] : Object.values(DEVICE_NAMES).flat();
 const nameLabel = names.map((n) => `"${n}"`).join(' or ');
 const durationMs = Number(args.duration) * 1000;
 const scanTimeoutMs = Number(args['scan-timeout']) * 1000;

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseFrame } from '../src/parse.js';
+import { DEVICE_NAMES, parseButton, parseFrame } from '../src/parse.js';
 import { toReading } from '../src/scale.js';
 import { woziFixtures } from './fixtures.wozi.js';
 import { bytes } from './helpers.js';
@@ -76,6 +76,18 @@ describe('parseFrame (Wozi)', () => {
     expect(reading('AC 05 00 00 44 01 CA 0F')).toMatchObject({ value: -68, grams: -68, unit: 'g' });
     expect(reading('AC 05 00 00 4B 32 CA 47')).toMatchObject({ value: 7.5, unit: 'oz' });
     expect('grams' in reading('AC 05 00 00 4B 32 CA 47')).toBe(false);
+  });
+
+  it('rejects the model ID reply as a control frame, not a button', () => {
+    // Both scales sent this to the try-nutrition query. Unlike HUAJUN's reply, its byte 7 is the same sum.
+    const reply = bytes('AC 05 FE 1D 00 15 CC FC');
+    expect(parseFrame(reply)).toEqual({ ok: false, rejection: { reason: 'control-frame', type: 0x1d } });
+    expect(parseButton(reply)).toBeUndefined();
+    expect(reply.slice(2, 7).reduce((sum, x) => (sum + x) & 0xff, 0)).toBe(reply[7]);
+  });
+
+  it('lists both advertised names under huajun', () => {
+    expect(DEVICE_NAMES.huajun).toEqual(['NSCALE', 'SCALE']);
   });
 
   it.each(all)('byte 7 is the low byte of the sum of bytes 2-6: $hex', ({ hex }) => {

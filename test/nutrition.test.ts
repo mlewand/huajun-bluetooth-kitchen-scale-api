@@ -7,6 +7,7 @@ import { bytes, FakeTransport } from './helpers.js';
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 const hexes = (frames: Uint8Array[]) => frames.map(hex);
 const sample: Nutrition = { calories: 100, protein: 2, fat: 3, carbohydrate: 4 };
+const allFields: Nutrition = { ...sample, fiber: 5, sodium: 11, sugar: 12, cholesterol: 13, potassium: 14, transFat: 15, saturatedFat: 16 };
 const huajunFrame = bytes('AC 05 00 01 18 02 CA 1A');
 const alphaFrame = bytes(alphaFixtures['26_grams_put_and_remove']![0]!);
 
@@ -23,9 +24,41 @@ describe('encodeNutrition (HUAJUN)', () => {
       .toEqual(['AD 01 00 00 7B 00 00 01 00 00 0A 00 09 C4 00 00 5E 00 00 00']);
   });
 
-  it('takes the 24-bit maximum and caps the undisplayed fat × 9 field there', () => {
+  it('takes the 24-bit maximum and caps the fat × 9 field there', () => {
     expect(hexes(encodeNutrition({ calories: 1677721.5, protein: 0, fat: 1677721.5, carbohydrate: 0 })))
       .toEqual(['AD 01 FF FF FF 00 00 00 FF FF FF 00 00 00 FF FF FF 00 00 00']);
+  });
+});
+
+describe('encodeNutrition (optional fields)', () => {
+  it('encodes the frames confirmed on the Wozi displays', () => {
+    // captures/wozi/NOTES.md: scale A showed every value, scale B the ones it has counters for.
+    expect(hexes(encodeNutrition(allFields))).toEqual([
+      'AD 01 00 03 E8 00 00 14 00 00 1E 00 00 28 00 01 0E 00 00 32',
+      'AD 02 00 00 6E 00 00 78 00 00 82 00 00 8C 00 00 96 00 00 A0',
+    ]);
+  });
+
+  it('carries fiber in AD 01, so fiber alone needs no second frame', () => {
+    expect(hexes(encodeNutrition({ ...sample, fiber: 5 }))).toEqual(['AD 01 00 03 E8 00 00 14 00 00 1E 00 00 28 00 01 0E 00 00 32']);
+  });
+
+  it('sends AD 02 when any of its fields is given, with the others at 0', () => {
+    expect(hexes(encodeNutrition({ ...sample, potassium: 14 }))[1]).toBe('AD 02 00 00 00 00 00 00 00 00 00 00 00 8C 00 00 00 00 00 00');
+  });
+
+  it('counts an explicit 0 as given', () => {
+    expect(hexes(encodeNutrition({ ...sample, sodium: 0 }))[1]).toBe('AD 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00');
+  });
+
+  it('rounds to tenths', () => {
+    // sodium 0.06 -> 1, sugar 1.04 -> 10, saturated fat 2.55 -> 26 (2.55 × 10 is just above 25.5).
+    expect(hexes(encodeNutrition({ ...sample, sodium: 0.06, sugar: 1.04, saturatedFat: 2.55 }))[1])
+      .toBe('AD 02 00 00 01 00 00 0A 00 00 00 00 00 00 00 00 00 00 00 1A');
+  });
+
+  it('alpha ignores them', () => {
+    expect(encodeNutrition(allFields, 'alpha')).toEqual(encodeNutrition(sample, 'alpha'));
   });
 });
 
@@ -61,6 +94,14 @@ describe('encodeNutrition validation', () => {
   it.each<DeviceKind>(['huajun', 'alpha'])('rejects out-of-range values on %s', (device) => {
     for (const bad of [-1, NaN, Infinity, 1677721.6]) {
       expect(() => encodeNutrition({ ...sample, protein: bad }, device)).toThrow(RangeError);
+    }
+  });
+
+  it.each<DeviceKind>(['huajun', 'alpha'])('rejects out-of-range optional values on %s', (device) => {
+    for (const name of ['fiber', 'sodium', 'sugar', 'cholesterol', 'potassium', 'transFat', 'saturatedFat'] as const) {
+      for (const bad of [-1, NaN, Infinity, 1677721.6]) {
+        expect(() => encodeNutrition({ ...sample, [name]: bad }, device), name).toThrow(RangeError);
+      }
     }
   });
 
@@ -111,6 +152,69 @@ describe('Scale.setNutrition', () => {
       expect(transport.written.map((w) => w.characteristic)).toEqual([WRITE_CHARACTERISTIC, WRITE_CHARACTERISTIC]);
       expect(writtenHex(transport)).toEqual(hexes(encodeNutrition(sample, 'alpha')));
     }
+  });
+
+  it('writes AD 02 1 s after AD 01, and resolves after it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const { scale, transport } = await connected({ device: 'huajun' });
+    let done = false;
+    const sent = scale.setNutrition(allFields).then((r) => { done = true; return r; });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(writtenHex(transport)).toEqual(hexes(encodeNutrition(allFields)).slice(0, 1));
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(sent).resolves.toBe(true);
+    expect(writtenHex(transport)).toEqual(hexes(encodeNutrition(allFields)));
+    expect(transport.written.map((w) => w.characteristic)).toEqual([WRITE_CHARACTERISTIC, WRITE_CHARACTERISTIC]);
+  });
+
+  it('keeps a whole call together: the next one waits for its AD 02', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const { scale, transport } = await connected({ device: 'huajun' });
+    const both = Promise.all([scale.setNutrition(allFields), scale.setNutrition(allFields)]);
+    await vi.advanceTimersByTimeAsync(2000);
+    await both;
+    const [first, second] = hexes(encodeNutrition(allFields));
+    expect(writtenHex(transport)).toEqual([first, second, first, second]);
+  });
+
+  it('clears what AD 02 showed when a later call leaves those fields out', async () => {
+    // The counters keep their values, so without this the previous food's sodium would stay on screen.
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const { scale, transport } = await connected({ device: 'huajun' });
+    const sent = Promise.all([scale.setNutrition({ ...sample, sodium: 11 }), scale.setNutrition(sample), scale.setNutrition(sample)]);
+    await vi.advanceTimersByTimeAsync(3000);
+    await sent;
+    const ad01 = hexes(encodeNutrition(sample))[0];
+    const zeros = hexes(encodeNutrition({ ...sample, sodium: 0 }))[1];
+    expect(writtenHex(transport)).toEqual([ad01, hexes(encodeNutrition({ ...sample, sodium: 11 }))[1], ad01, zeros, ad01, zeros]);
+  });
+
+  it('does not write AD 02 to a scale that was never given those fields', async () => {
+    const { scale, transport } = await connected({ device: 'huajun' });
+    await scale.setNutrition({ ...sample, fiber: 5 });
+    await scale.setNutrition(sample);
+    expect(writtenHex(transport).every((frame) => frame.startsWith('AD 01'))).toBe(true);
+    expect(transport.written).toHaveLength(2);
+  });
+
+  it('rejects and drops AD 02 when the connection ends between the frames', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const { scale, transport } = await connected({ device: 'huajun' });
+    const failed = expect(scale.setNutrition(allFields)).rejects.toThrow('Not connected');
+    await vi.advanceTimersByTimeAsync(500);
+    await scale.disconnect();
+    await vi.advanceTimersByTimeAsync(500);
+    await failed;
+    expect(writtenHex(transport)).toEqual(hexes(encodeNutrition(allFields)).slice(0, 1));
+  });
+
+  it('alpha gets its usual two frames for a call with the optional fields', async () => {
+    const { scale, transport } = await connected({ device: 'alpha' }, [], 0);
+    await scale.setNutrition(allFields);
+    await scale.setNutrition(sample);
+    const frames = hexes(encodeNutrition(sample, 'alpha'));
+    expect(writtenHex(transport)).toEqual([...frames, ...frames]);
   });
 
   it('waits for the first frame to identify the scale, then writes for that scale', async () => {

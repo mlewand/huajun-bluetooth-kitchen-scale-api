@@ -1,5 +1,7 @@
 import { ALPHA_FRAME_LENGTH, encodeAlphaNutrition, parseAlpha } from './protocols/alpha.js';
-import { encodeHuajunNutrition, HUAJUN_FRAME_LENGTH, MAX_NUTRITION_VALUE, parseHuajun, parseHuajunButton } from './protocols/huajun.js';
+import { AD_02_FIELDS, encodeHuajunNutrition, HUAJUN_FRAME_LENGTH, MAX_NUTRITION_VALUE, parseHuajun, parseHuajunButton } from './protocols/huajun.js';
+
+export { hasAd02Field } from './protocols/huajun.js';
 
 /** GATT service that carries the scale's data (full lowercase 128-bit UUID). */
 export const SERVICE_UUID = '0000ffb0-0000-1000-8000-00805f9b34fb';
@@ -23,9 +25,12 @@ export type Button = 'plate' | 'total';
 
 /**
  * Nutrition values to show on the scale's display, for {@link encodeNutrition} and
- * `Scale.setNutrition`. Each must be a finite number from 0 to 1677721.5. Protein, fat and
- * carbohydrate are rounded to 0.1 g on both scales; calories to 0.1 kcal on HUAJUN and to 1 kcal on
- * alpha, which sends whole kcal.
+ * `Scale.setNutrition`. Each must be a finite number from 0 to 1677721.5. Everything is rounded to
+ * 0.1, except that alpha sends calories in whole kcal.
+ *
+ * The optional fields only reach Wozi displays; HUAJUN has no counters for them and alpha ignores
+ * them. The Wozi scale advertised as `NSCALE` shows all of them. The one advertised as `SCALE` shows
+ * fiber, sodium and cholesterol only. A field left out shows 0.
  */
 export interface Nutrition {
   /** Energy, kcal. */
@@ -36,10 +41,27 @@ export interface Nutrition {
   fat: number;
   /** Carbohydrate, g. */
   carbohydrate: number;
+  /** Fiber, g. */
+  fiber?: number;
+  /** Sodium, mg. */
+  sodium?: number;
+  /** Sugar, g. */
+  sugar?: number;
+  /** Cholesterol, mg. */
+  cholesterol?: number;
+  /** Potassium, mg. */
+  potassium?: number;
+  /** Trans fat, g. */
+  transFat?: number;
+  /** Saturated fat, g. */
+  saturatedFat?: number;
 }
 
-/** Advertised Bluetooth name of each supported scale. */
-export const DEVICE_NAMES: Record<DeviceKind, string> = { huajun: 'NSCALE', alpha: 'MY_SCALE' };
+/**
+ * Advertised Bluetooth names of each kind of scale. `huajun`: HUAJUN and one Wozi scale advertise
+ * `NSCALE`, the other Wozi scale `SCALE`.
+ */
+export const DEVICE_NAMES: Record<DeviceKind, readonly string[]> = { huajun: ['NSCALE', 'SCALE'], alpha: ['MY_SCALE'] };
 
 /**
  * Which scales can show nutrition values written by {@link encodeNutrition}. `Scale.setNutrition`
@@ -151,12 +173,13 @@ export function parseButton(bytes: Uint8Array, device: DeviceKind | 'auto' = 'au
 
 /**
  * Throw a `RangeError` unless every {@link Nutrition} value is a finite number from 0 to
- * 1677721.5, the range both scales can carry.
+ * 1677721.5, the range all scales can carry. Optional fields may be left out.
  */
 export function checkNutrition(nutrition: Nutrition): void {
-  for (const name of ['calories', 'protein', 'fat', 'carbohydrate'] as const) {
+  const optional = ['fiber', ...AD_02_FIELDS] as const;
+  for (const name of ['calories', 'protein', 'fat', 'carbohydrate', ...optional.filter((field) => nutrition[field] !== undefined)] as const) {
     const v = nutrition[name];
-    if (!Number.isFinite(v) || v < 0 || v > MAX_NUTRITION_VALUE) throw new RangeError(`Nutrition ${name} must be from 0 to ${MAX_NUTRITION_VALUE}, got ${v}`);
+    if (v === undefined || !Number.isFinite(v) || v < 0 || v > MAX_NUTRITION_VALUE) throw new RangeError(`Nutrition ${name} must be from 0 to ${MAX_NUTRITION_VALUE}, got ${v}`);
   }
 }
 
@@ -164,10 +187,12 @@ export function checkNutrition(nutrition: Nutrition): void {
  * Encode the frames that show `nutrition` on the scale's display, to be written to
  * {@link WRITE_CHARACTERISTIC} in order. Pure and platform-agnostic; `Scale.setNutrition` uses it.
  *
- * - HUAJUN: one frame that sets the display's four nutrition counters, which keep the values until
- *   the connection ends.
+ * - HUAJUN and Wozi: the `AD 01` frame that sets the display's nutrition counters, followed by the
+ *   `AD 02` frame if `sodium`, `sugar`, `cholesterol`, `potassium`, `transFat` or `saturatedFat` is
+ *   given. HUAJUN keeps the values until the connection ends. Leave 1 s between the frames: that's
+ *   the only spacing confirmed, and `Scale.setNutrition` does it for you.
  * - alpha: the two frames of its nutrition command; the display then cycles calories, protein, fat
- *   and carbohydrate twice and returns to the weight.
+ *   and carbohydrate twice and returns to the weight. The optional fields are ignored.
  *
  * Returns an empty list for a scale that can't show nutrition ({@link NUTRITION_SUPPORT}). Throws a
  * `RangeError` if a value isn't a finite number from 0 to 1677721.5.
@@ -175,5 +200,5 @@ export function checkNutrition(nutrition: Nutrition): void {
 export function encodeNutrition(nutrition: Nutrition, device: DeviceKind = 'huajun'): Uint8Array[] {
   checkNutrition(nutrition);
   if (!NUTRITION_SUPPORT[device]) return [];
-  return device === 'huajun' ? [encodeHuajunNutrition(nutrition)] : encodeAlphaNutrition(nutrition);
+  return device === 'huajun' ? encodeHuajunNutrition(nutrition) : encodeAlphaNutrition(nutrition);
 }
