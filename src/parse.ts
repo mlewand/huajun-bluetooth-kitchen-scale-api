@@ -12,7 +12,10 @@ export const WRITE_CHARACTERISTIC = '0000ffb1-0000-1000-8000-00805f9b34fb';
 /** Display unit of the scale. */
 export type Unit = 'g' | 'ml' | 'lb:oz' | 'oz' | 'fl.oz';
 
-/** The scales this library can decode. */
+/**
+ * The scales this library can decode. `'huajun'` also covers Wozi scales, which advertise the same
+ * name and use the same protocol.
+ */
 export type DeviceKind = 'huajun' | 'alpha';
 
 /** A button on the scale that reports its presses: HUAJUN `+Plate` (`'plate'`) and `Total` (`'total'`). */
@@ -50,7 +53,11 @@ export type Resolution = Partial<Record<Unit, number>>;
 /** Fallback resolution for units a device's {@link DEVICE_RESOLUTION} entry doesn't list, so a new device only needs an entry where it differs. */
 export const DEFAULT_RESOLUTION: Readonly<Resolution> = { g: 1, ml: 1, oz: 0.1, 'fl.oz': 0.1 };
 
-/** What each scale's display shows: `Reading.value` is rounded to this unless `ScaleOptions.resolution` overrides it. */
+/**
+ * What each scale's display shows: `Reading.value` is rounded to this unless
+ * `ScaleOptions.resolution` overrides it. `huajun` is HUAJUN's display. Wozi frames carry fewer
+ * decimals (g 0, oz 1), so the rounding leaves them as they are.
+ */
 export const DEVICE_RESOLUTION: Record<DeviceKind, Readonly<Resolution>> = {
   huajun: { g: 0.1, ml: 0.1, oz: 0.01, 'fl.oz': 0.01 },
   alpha: { g: 1, ml: 1, oz: 0.1 },
@@ -61,8 +68,9 @@ export interface ParsedFrame {
   /** Which scale's decoder produced this frame. */
   device: DeviceKind;
   /**
-   * Unsigned magnitude as sent, before any scaling. HUAJUN: bytes 3-4, in 0.1 g, 0.1 ml,
-   * 0.01 oz or 0.01 fl.oz depending on the unit. alpha: 24 bits, always in milligrams whatever the display unit.
+   * Unsigned magnitude as sent, before any scaling. HUAJUN and Wozi: bytes 3-4, with as many decimals
+   * as byte 5 bits 1-3 say (HUAJUN 0.1 g, 0.1 ml, 0.01 oz or 0.01 fl.oz; Wozi 1 g or 0.1 oz).
+   * alpha: 24 bits, always in milligrams whatever the display unit.
    */
   rawWeight: number;
   /** HUAJUN: byte 5 bit 0, confirmed for grams only (tare, then item removed). alpha: byte 2 bit 7, seen in a single capture. */
@@ -71,7 +79,7 @@ export interface ParsedFrame {
   unit?: Unit;
   /**
    * Signed weight in `unit`. Full precision, not rounded to the display (`toReading` does that). Only decoded where a capture confirms the scale.
-   * HUAJUN: g and ml (÷10), oz and fl.oz (÷100); absent for lb:oz.
+   * HUAJUN and Wozi: g, ml, oz and fl.oz, `rawWeight` ÷ 10^(byte 5 bits 1-3); absent for lb:oz.
    * alpha: g, oz and ml, converted from milligrams (ml assumes water, 1 g = 1 ml); absent for lb:oz.
    */
   value?: number;
@@ -115,9 +123,10 @@ export type ParseResult = { ok: true; frame: ParsedFrame } | { ok: false; reject
  * decoder runs, so a frame of the other scale is rejected as `bad-length`.
  *
  * Both decoders validate length, the `0xAC` header and the frame type in byte 1. HUAJUN control
- * frames (button events) are rejected as `control-frame`, and HUAJUN frames have no checksum
- * (byte 7 has no known formula). alpha frames are also checked for their checksum, and frames
- * other than weights (byte 18 isn't `0xA6`) are rejected as `not-weight-frame`.
+ * frames (button events) are rejected as `control-frame`, and HUAJUN frames get no checksum check:
+ * byte 7 is one on Wozi but has no known formula on HUAJUN, and a frame doesn't say which scale sent
+ * it. alpha frames are also checked for their checksum, and frames other than weights (byte 18
+ * isn't `0xA6`) are rejected as `not-weight-frame`.
  */
 export function parseFrame(bytes: Uint8Array, device: DeviceKind | 'auto' = 'auto'): ParseResult {
   if (device === 'auto') {

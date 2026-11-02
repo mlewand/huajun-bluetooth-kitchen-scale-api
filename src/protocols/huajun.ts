@@ -12,15 +12,16 @@ const CONTROL = 0xfe;
 const BUTTON_EVENT = 0x1e;
 /** Byte 4 of a button press (`captures/huajun/rev1/buttons`). */
 const BUTTONS: Record<number, Button> = { 0x03: 'plate', 0x04: 'total' };
-const SCALE: Partial<Record<Unit, number>> = { g: 10, ml: 10, oz: 100, 'fl.oz': 100 };
 
 /** Length of a HUAJUN frame, used by `parseFrame` to pick the decoder. */
 export const HUAJUN_FRAME_LENGTH = FRAME_LENGTH;
 
 /**
- * Decode one 8-byte HUAJUN notification. Validates the length, the `0xAC` header and the `0x05`
- * frame type, and rejects control frames (byte 2 `0xFE`, sent when `+Plate` or `Total` is
- * pressed); byte 7 has no known checksum.
+ * Decode one 8-byte notification of the HUAJUN protocol, which Wozi scales also use. Validates the
+ * length, the `0xAC` header and the `0x05` frame type, and rejects control frames (byte 2 `0xFE`,
+ * sent when `+Plate` or `Total` is pressed). Byte 7 isn't checked: it's a checksum on Wozi (the low
+ * byte of the sum of bytes 2-6) but has no known formula on HUAJUN, and a frame doesn't say which
+ * scale sent it.
  */
 export function parseHuajun(bytes: Uint8Array): ParseResult {
   if (bytes.length !== FRAME_LENGTH) return { ok: false, rejection: { reason: 'bad-length', length: bytes.length } };
@@ -32,10 +33,12 @@ export function parseHuajun(bytes: Uint8Array): ParseResult {
   const rawWeight = view.getUint16(3);
   const negative = (bytes[5]! & 1) === 1;
   const unit = UNITS[bytes[5]! >> 4];
-  const divisor = unit && SCALE[unit];
+  // Byte 5 bits 1-3 count the weight's decimals. HUAJUN sends 1 for g and ml, 2 for oz and fl.oz; Wozi 0 for g, 1 for oz.
+  const decimals = (bytes[5]! >> 1) & 7;
   const frame: ParsedFrame = { device: 'huajun', rawWeight, negative, raw: bytes };
   if (unit) frame.unit = unit;
-  if (divisor) frame.value = (negative ? -rawWeight : rawWeight) / divisor;
+  // lb:oz has no single-number form, so it has no value.
+  if (unit && unit !== 'lb:oz') frame.value = (negative ? -rawWeight : rawWeight) / 10 ** decimals;
   if (bytes[6] === 0xca) frame.stable = true;
   else if (bytes[6] === 0xce) frame.stable = false;
   return { ok: true, frame };

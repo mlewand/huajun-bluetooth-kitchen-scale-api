@@ -1,6 +1,6 @@
 # @mlewand/huajun-ble-scale
 
-TypeScript library that reads live weight from Bluetooth LE kitchen scales: HUAJUN (advertised as `NSCALE`, 5000 g / 0.1 g) and the "alpha" scale (advertised as `MY_SCALE`, 5000 g / 1 g). Works in Node (macOS) and in Capacitor/Web Bluetooth. Both scales use the same GATT service and characteristic, so by default (`device: 'auto'`) the library tells them apart by frame length; pass `device: 'huajun'` or `device: 'alpha'` to `Scale` and the transport to pin one. It mostly reads: the one thing it writes is nutrition values (calories, protein, fat, carbohydrate) to the HUAJUN display's counters, and only when you call `setNutrition`.
+TypeScript library that reads live weight from Bluetooth LE kitchen scales: HUAJUN (advertised as `NSCALE`, 5000 g / 0.1 g), Wozi (also advertised as `NSCALE`, 1 g) and the "alpha" scale (advertised as `MY_SCALE`, 5000 g / 1 g). Works in Node (macOS) and in Capacitor/Web Bluetooth. All of them use the same GATT service and characteristic, so by default (`device: 'auto'`) the library tells the protocols apart by frame length; pass `device: 'huajun'` or `device: 'alpha'` to `Scale` and the transport to pin one. Wozi uses the HUAJUN protocol and reports `device: 'huajun'`. It mostly reads: the one thing it writes is nutrition values (calories, protein, fat, carbohydrate) to the HUAJUN display's counters, and only when you call `setNutrition`.
 
 **Unofficial.** This project is not affiliated with or endorsed by HUAJUN or any other scale maker. Brand names are trademarks of their owners and are used only to say which hardware the library works with.
 
@@ -68,26 +68,27 @@ On macOS the terminal app needs Bluetooth permission (System Settings > Privacy 
 
 Both scales: service `0000ffb0-…`, notifications on `FFB2`. Reading needs no writes.
 
-### HUAJUN (`NSCALE`)
+### HUAJUN and Wozi (`NSCALE`)
 
-8-byte frames. `FFB4` never sent data. A notification arrives about every 225 ms, even when nothing changes.
+8-byte frames. `FFB4` never sent data on HUAJUN. A notification arrives about every 225 ms, even when nothing changes.
 
 | Byte | Meaning | Status |
 |---|---|---|
 | 0 | Header `AC` | confirmed |
 | 1 | `05`, frame type; other values are rejected | constant in every capture |
 | 2 | `00` in weight frames; `FE` marks a control frame (below) | confirmed |
-| 3–4 | Weight magnitude, big-endian; ÷10 for g and ml, ÷100 for oz and fl.oz | confirmed for g (up to 4770.0), ml, oz, fl.oz |
-| 5, high nibble | Unit: 0 g, 1 ml, 2 lb:oz, 3 oz, 4 fl.oz | confirmed as codes |
+| 3–4 | Weight magnitude, big-endian, with the decimals byte 5 gives | HUAJUN: confirmed for g (up to 4770.0), ml, oz, fl.oz. Wozi: confirmed for g (up to 2123), oz |
+| 5, high nibble | Unit: 0 g, 1 ml, 2 lb:oz, 3 oz, 4 fl.oz | confirmed as codes on HUAJUN; g, lb:oz, oz seen on Wozi |
+| 5, bits 1–3 | Decimals in the weight (divide by 10 to this power). HUAJUN: 1 for g and ml, 2 for oz and fl.oz. Wozi: 0 for g, 1 for oz | confirmed |
 | 5, bit 0 | Negative sign | confirmed for g |
 | 6 | `CA` stable, `CE` changing | confirmed |
-| 7 | Unknown; not a checksum of bytes 0–6 | unverified |
+| 7 | Wozi: checksum, the low byte of the sum of bytes 2–6. HUAJUN: unknown, and not that sum. Not checked, because a frame doesn't say which scale sent it | Wozi: confirmed on every captured frame. HUAJUN: unverified |
 
 Control frames are `AC 05 FE 1E xx 00 00 ??`: `xx` is `03` for the `+Plate` button and `04` for `Total`. They aren't weights: `Scale.onButton` delivers them as `'plate'` and `'total'`, and `parseButton` decodes them from raw bytes. Control frames with other codes are rejected as `control-frame`. `UNIT` shows up only as the unit change in the next weight frames, and `TARE` on an empty scale sends nothing.
 
-#### Writing nutrition (HUAJUN)
+#### Writing nutrition (HUAJUN and Wozi)
 
-Written to `FFB1` without response, 20 bytes, no checksum: `AD 01`, then six 24-bit big-endian values of round(value × 10). Confirmed on the display (model ID 21): calories (kcal), protein, fat and carbohydrate (g), shown with one decimal and kept until the connection ends. The scale ignores the frame in the first moments after connecting (0.2 s and 0.7 s after subscribing: ignored; 2.7 s: shown), so the library waits until 3 s after connecting, about as long as the vendor app does. The last two values (energy from fat and fiber, as the vendor app sends them) aren't displayed. The layout comes from the vendor app; `npm run try-nutrition` is the experiment that confirmed it.
+Written to `FFB1` without response, 20 bytes, no checksum: `AD 01`, then six 24-bit big-endian values of round(value × 10). Confirmed on the display (model ID 21): calories (kcal), protein, fat and carbohydrate (g), shown with one decimal and kept until the connection ends. The scale ignores the frame in the first moments after connecting (0.2 s and 0.7 s after subscribing: ignored; 2.7 s: shown), so the library waits until 3 s after connecting, about as long as the vendor app does. The last two values (energy from fat and fiber, as the vendor app sends them) aren't displayed. The layout comes from the vendor app; `npm run try-nutrition` is the experiment that confirmed it. The Wozi display shows the same four values from this frame; its other nutrition counters (fiber, sodium and so on) stay at 0 for now, see [TODO.md](TODO.md).
 
 ### alpha (`MY_SCALE`)
 

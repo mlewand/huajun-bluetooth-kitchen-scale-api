@@ -49,12 +49,12 @@ One instance covers one connection. To reconnect, create a new `Scale`. The only
 | `grams` | `number` | The display unit is g. Signed (negative after tare). Rounded like `value`. |
 | `value` | `number` | The unit's scale is confirmed (see below). Signed, in `unit`, rounded to the display resolution (see below). |
 | `unit` | `Unit` | The frame holds a known unit code. `'g' \| 'ml' \| 'lb:oz' \| 'oz' \| 'fl.oz'` |
-| `stable` | `boolean` | HUAJUN: byte 6 is `0xCA` (true) or `0xCE` (false). alpha: byte 2 bit 0, unless bits 1-6 of byte 2 are set. |
-| `raw` | `Uint8Array` | Always. The undecoded frame (8 bytes for HUAJUN, 20 for alpha), including the bytes that are not understood. |
+| `stable` | `boolean` | HUAJUN and Wozi: byte 6 is `0xCA` (true) or `0xCE` (false). alpha: byte 2 bit 0, unless bits 1-6 of byte 2 are set. |
+| `raw` | `Uint8Array` | Always. The undecoded frame (8 bytes for HUAJUN and Wozi, 20 for alpha), including the bytes that are not understood. |
 | `receivedAt` | `number` | Always. `Date.now()` when received. Can jump when the device clock is adjusted. |
 | `receivedAtMonotonic` | `number` | Always. Receive time on a monotonic clock, in ms (`performance.now()` by default). Never goes backwards, so use it for durations and ordering. Only differences between readings are meaningful. |
 
-`value` is decoded for HUAJUN in g and ml (÷10) and in oz and fl.oz (÷100), and for alpha in g, oz and ml. lb:oz readings on both scales carry `unit`, `stable` and `raw` but no `value`; see [TODO.md](../TODO.md).
+`value` is decoded for HUAJUN and Wozi in g, ml, oz and fl.oz, using the decimals the frame gives in byte 5 bits 1-3 (HUAJUN 1 for g and ml, 2 for oz and fl.oz; Wozi 0 for g, 1 for oz), and for alpha in g, oz and ml. lb:oz readings on both scales carry `unit`, `stable` and `raw` but no `value`; see [TODO.md](../TODO.md).
 
 On alpha the scale always sends the weight in milligrams and the library converts it into the displayed unit: `value` is grams for g, grams ÷ 28.349523125 for oz, and grams for ml, which assumes water (1 g = 1 ml; the scale can't know the liquid). `grams` stays tied to the display unit, so in oz or ml mode it is absent; the exact weight in milligrams is `ParsedFrame.rawWeight` (via `parseFrame(reading.raw)`).
 
@@ -66,6 +66,8 @@ On alpha the scale always sends the weight in milligrams and the library convert
 |---|---|---|---|---|
 | `huajun` | 0.1 | 0.1 | 0.01 | 0.01 |
 | `alpha` | 1 | 1 | 0.1 | no `value` |
+
+Wozi scales report `device: 'huajun'`, and their frames carry fewer decimals than that row (g 1, oz 0.1), so the rounding leaves their values as they are. Don't use the `huajun` row to format a Wozi reading: `DEVICE_RESOLUTION` would add a digit the scale doesn't show.
 
 `DEFAULT_RESOLUTION` (`{ g: 1, ml: 1, oz: 0.1, 'fl.oz': 0.1 }`) covers any unit a device's entry doesn't list, so a new device only needs an entry where it differs. `Resolution` is `Partial<Record<Unit, number>>`, a step size in that unit. Pass `ScaleOptions.resolution` (or the third argument of `toReading`) to ask for more, for example `{ g: 0.1 }`. The alpha scale sends milligrams, so down to `{ g: 0.001 }` is real data. `ParsedFrame.value` from `parseFrame` and `rawWeight` are never rounded.
 
@@ -116,11 +118,11 @@ Pure decoder for one notification. Returns `{ ok: true, frame: ParsedFrame }` or
 - `{ reason: 'bad-checksum', expected, actual }` (alpha): the low byte of the sum of bytes 2-18 doesn't equal byte 19.
 - `{ reason: 'not-weight-frame', type }` (alpha): a valid frame whose type in byte 18 isn't `0xA6` (weight), for example `0xA0` device info. `type` is byte 18.
 
-HUAJUN frames get no checksum validation because byte 7 has no known formula.
+HUAJUN and Wozi frames get no checksum validation. Byte 7 is a checksum on Wozi (the low byte of the sum of bytes 2-6) but has no known formula on HUAJUN, and a frame doesn't say which scale sent it.
 
-`ParsedFrame` has `device`, `rawWeight` (unsigned magnitude as sent: HUAJUN bytes 3-4, alpha the 24 bits of bytes 4-6 in milligrams), `negative`, `raw`, and the optional `unit`, `value` and `stable` described above. `Unit` is the display-unit union.
+`ParsedFrame` has `device`, `rawWeight` (unsigned magnitude as sent: HUAJUN and Wozi bytes 3-4, with the decimals byte 5 gives; alpha the 24 bits of bytes 4-6 in milligrams), `negative`, `raw`, and the optional `unit`, `value` and `stable` described above. `Unit` is the display-unit union.
 
-`DeviceKind` is `'huajun' | 'alpha'`.
+`DeviceKind` is `'huajun' | 'alpha'`. `'huajun'` also covers Wozi scales, which advertise the same name and use the same protocol.
 
 ## `parseButton(bytes: Uint8Array, device?: DeviceKind | 'auto'): Button | undefined`
 
@@ -139,7 +141,7 @@ Pure encoder for the frames `setNutrition` writes to `WRITE_CHARACTERISTIC`, in 
 
 ## Constants
 
-- `DEVICE_NAMES`: advertised name per device, `{ huajun: 'NSCALE', alpha: 'MY_SCALE' }`
+- `DEVICE_NAMES`: advertised name per device, `{ huajun: 'NSCALE', alpha: 'MY_SCALE' }`. Wozi scales also advertise `NSCALE`, so with several powered on, a transport scanning by name connects to the first one it finds
 - `DEVICE_RESOLUTION`, `DEFAULT_RESOLUTION`, `Resolution`: the display resolution per device and unit that `Reading.value` is rounded to; see [Resolution](#resolution)
 - `SERVICE_UUID`: `0000ffb0-0000-1000-8000-00805f9b34fb`
 - `WEIGHT_CHARACTERISTIC`: `0000ffb2-0000-1000-8000-00805f9b34fb`
