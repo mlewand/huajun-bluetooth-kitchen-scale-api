@@ -136,7 +136,7 @@ Pure encoder for the frames `setNutrition` writes to `WRITE_CHARACTERISTIC`, in 
 
 `Nutrition` is `{ calories, protein, fat, carbohydrate }`, in kcal and grams. All four are required. Each must be a finite number from 0 to 1677721.5, otherwise it throws a `RangeError`.
 
-- **HUAJUN**, one frame: `AD 01` followed by six 24-bit big-endian values of round(value × 10), with no checksum: calories, protein, fat, carbohydrate, energy from fat, fiber. The vendor app fills the last two with fat × 9 and fiber. The HUAJUN display doesn't show them, so the library sends fat × 9 (capped at the maximum) and 0.
+- **HUAJUN and Wozi**, one frame: `AD 01` followed by six 24-bit big-endian values of round(value × 10), with no checksum: calories, protein, fat, carbohydrate, energy from fat, fiber. The vendor app fills the last two with fat × 9 and fiber. The HUAJUN display doesn't show them, so the library sends fat × 9 (capped at the maximum) and 0.
 - **alpha**, two 20-byte frames of the nutrition command: `AC 41 <frame count> <index>`, 14 payload bytes, `D5` and the checksum (low byte of the sum of bytes 2-18). The payload is a food ID (u32, the library sends 1), a count (4), then per value a type byte and a 24-bit big-endian value, in the vendor app's order: type 0 calories in whole kcal (rounded), 1 fat, 2 carbohydrate and 5 protein, each round(g × 10). Confirmed on the display, and identical to what the vendor app sends.
 
 ## Constants

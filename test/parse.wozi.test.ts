@@ -87,19 +87,28 @@ describe('parseFrame (Wozi)', () => {
 describe('captures/wozi', () => {
   const dir = new URL('../captures/wozi/', import.meta.url);
   const known = new Set(Object.values(woziFixtures).flat());
+  // try-nutrition sessions also hold the frames it wrote (`write: true`, FFB1), which aren't scale output.
   const frames = readdirSync(dir)
     .filter((f) => f.endsWith('.jsonl'))
     .flatMap((f) =>
       readFileSync(new URL(f, dir), 'utf8')
         .trim()
         .split('\n')
-        .map((line) => ({ file: f, hex: (JSON.parse(line) as { hex: string }).hex })),
+        .map((line) => JSON.parse(line) as { char: string; hex: string; write?: boolean })
+        .filter((line) => line.char === 'FFB2' && !line.write)
+        .map(({ hex }) => ({ file: f, hex })),
     );
+  const isControl = (hex: string) => hex.split(' ')[2] === 'FE';
 
   it('has capture files', () => expect(frames.length).toBeGreaterThan(0));
 
-  it.each(frames)('$file: $hex decodes and is a fixture', ({ hex }) => {
+  it.each(frames.filter(({ hex }) => !isControl(hex)))('$file: $hex decodes and is a fixture', ({ hex }) => {
     expect(parseFrame(bytes(hex)).ok).toBe(true);
     expect(known.has(hex)).toBe(true);
+  });
+
+  it.each(frames.filter(({ hex }) => isControl(hex)))('$file: $hex is rejected as a control frame', ({ hex }) => {
+    const r = parseFrame(bytes(hex));
+    expect(!r.ok && r.rejection.reason).toBe('control-frame');
   });
 });
